@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// TODO(ia0): Remove when the module is used.
-#![allow(dead_code)]
-
 use crate::bitfield::*;
 use crate::{Storage, StorageIndex, StoreError, StoreResult};
 use alloc::vec::Vec;

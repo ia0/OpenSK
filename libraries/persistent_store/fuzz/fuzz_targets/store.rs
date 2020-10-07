@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(not(any(test, feature = "ram_storage")))]
-mod syscall;
+#![no_main]
 
-#[cfg(not(any(test, feature = "ram_storage")))]
-pub use self::syscall::SyscallStorage;
+use fuzz_store::store;
+use libfuzzer_sys::fuzz_target;
+
+fuzz_target!(|data: &[u8]| {
+    store::fuzz(data, false, None);
+});

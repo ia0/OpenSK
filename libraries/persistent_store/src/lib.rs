@@ -344,15 +344,30 @@
 //! storage, the store is checked not to crash.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![feature(slice_fill)]
 
 #[macro_use]
 extern crate alloc;
 
 #[macro_use]
 mod bitfield;
+mod buffer;
+#[cfg(feature = "std")]
+mod driver;
 mod format;
+#[cfg(feature = "std")]
+mod model;
 mod storage;
 mod store;
 
+pub use self::buffer::{BufferCorruptFunction, BufferOptions, BufferStorage};
+#[cfg(feature = "std")]
+pub use self::driver::{
+    StoreDriver, StoreDriverOff, StoreDriverOn, StoreInterruption, StoreInvariant,
+};
+#[cfg(feature = "std")]
+pub use self::model::{StoreModel, StoreOperation};
 pub use self::storage::{Storage, StorageError, StorageIndex, StorageResult};
-pub use self::store::{StoreError, StoreResult};
+pub use self::store::{
+    Store, StoreError, StoreHandle, StoreIter, StoreRatio, StoreResult, StoreUpdate,
+};

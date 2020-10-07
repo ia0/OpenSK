@@ -60,6 +60,9 @@ cargo fuzz build
 cd libraries/cbor
 cargo fuzz build
 cd ../..
+cd libraries/persistent_store
+cargo fuzz build
+cd ../..
 
 echo "Checking that CTAP2 builds and links properly (1 set of features)..."
 cargo build --release --target=thumbv7em-none-eabi --features with_ctap1
@@ -84,24 +87,24 @@ echo "Checking deployment of other boards..."
 if [ -z "${TRAVIS_OS_NAME}" -o "${TRAVIS_OS_NAME}" = "linux" ]
 then
   echo "Running unit tests on the desktop (release mode)..."
-  cd libraries/cbor
-  cargo test --release --features std
-  cd ../..
-  cd libraries/crypto
-  RUSTFLAGS='-C target-feature=+aes' cargo test --release --features std,derive_debug
-  cd ../..
+  # cd libraries/cbor
+  # cargo test --release --features std
+  # cd ../..
+  # cd libraries/crypto
+  # RUSTFLAGS='-C target-feature=+aes' cargo test --release --features std,derive_debug
+  # cd ../..
   cd libraries/persistent_store
   cargo test --release --features std
   cd ../..
   cargo test --release --features std
 
   echo "Running unit tests on the desktop (debug mode)..."
-  cd libraries/cbor
-  cargo test --features std
-  cd ../..
-  cd libraries/crypto
-  RUSTFLAGS='-C target-feature=+aes' cargo test --features std,derive_debug
-  cd ../..
+  # cd libraries/cbor
+  # cargo test --features std
+  # cd ../..
+  # cd libraries/crypto
+  # RUSTFLAGS='-C target-feature=+aes' cargo test --features std,derive_debug
+  # cd ../..
   cd libraries/persistent_store
   cargo test --features std
   cd ../..

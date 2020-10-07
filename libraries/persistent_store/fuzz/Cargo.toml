@@ -1,0 +1,26 @@
+[package]
+name = "fuzz-store"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies.persistent_store]
+path = ".."
+features = ["std"]
+[dependencies.libfuzzer-sys]
+git = "https://github.com/rust-fuzz/libfuzzer-sys.git"
+[dependencies]
+rand_core = "0.5"
+rand_pcg = "0.2"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "store"
+path = "fuzz_targets/store.rs"

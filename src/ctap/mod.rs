@@ -496,6 +496,7 @@ where
         // decide whether batch attestation is needed.
         let (signature, x5c) = match self.persistent_store.attestation_private_key()? {
             Some(attestation_private_key) => {
+                let attestation_private_key = array_ref![attestation_private_key, 0, 32];
                 let attestation_key =
                     crypto::ecdsa::SecKey::from_bytes(attestation_private_key).unwrap();
                 let attestation_certificate = self

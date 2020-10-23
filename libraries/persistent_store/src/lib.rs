@@ -344,7 +344,6 @@
 //! storage, the store is checked not to crash.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![feature(slice_fill)]
 
 extern crate alloc;
 

@@ -168,7 +168,7 @@ impl StoreDriverOff {
         self.storage.arm_interruption(interruption.delay);
         Ok(match Store::new(self.storage) {
             Ok(mut store) => {
-                store.storage_mut().unarm_interruption();
+                store.storage_mut().disarm_interruption();
                 let mut error = None;
                 if let Some(complete) = self.complete {
                     match StoreDriverOn::new(store, complete.model, &complete.deleted) {
@@ -268,7 +268,7 @@ impl StoreDriverOn {
         Ok(match store_result {
             Err(StoreError::NoLifetime) => return Err((self.store, StoreInvariant::NoLifetime)),
             Ok(()) | Err(StoreError::NoCapacity) | Err(StoreError::InvalidArgument) => {
-                self.store.storage_mut().unarm_interruption();
+                self.store.storage_mut().disarm_interruption();
                 let model_result = self.model.apply(operation);
                 if store_result != model_result {
                     return Err((

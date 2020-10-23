@@ -113,7 +113,7 @@ impl BufferStorage {
         self.interruption.arm(delay);
     }
 
-    /// Unarms an interruption that did not trigger.
+    /// Disarms an interruption that did not trigger.
     ///
     /// Returns the remaining delay.
     ///
@@ -122,7 +122,7 @@ impl BufferStorage {
     /// Panics if an interruption was not [armed] and if the interruption already triggered.
     ///
     /// [armed]: struct.BufferStorage.html#method.arm_interruption
-    pub fn unarm_interruption(&mut self) -> usize {
+    pub fn disarm_interruption(&mut self) -> usize {
         self.interruption.get().err().unwrap()
     }
 
@@ -392,6 +392,11 @@ enum Interruption {
 }
 
 impl Interruption {
+    /// Arms an interruption for a given delay.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an interruption is already armed.
     fn arm(&mut self, delay: usize) {
         match self {
             Interruption::Ready => *self = Interruption::Armed { delay },
@@ -399,6 +404,13 @@ impl Interruption {
         }
     }
 
+    /// Disarms an interruption.
+    ///
+    /// Returns the interrupted operation if any, otherwise the remaining delay.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an interruption was not armed.
     fn get(&mut self) -> Result<OwnedBufferOperation, usize> {
         let mut interruption = Interruption::Ready;
         core::mem::swap(self, &mut interruption);
@@ -409,6 +421,15 @@ impl Interruption {
         }
     }
 
+    /// Interrupts an operation if the delay is over.
+    ///
+    /// Decrements the delay if positive. Otherwise, the operation is stored and an error is
+    /// returned to interrupt the operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an operation has already been interrupted and the interruption has not been
+    /// disarmed.
     fn tick(&mut self, operation: &SharedBufferOperation) -> StorageResult<()> {
         match self {
             Interruption::Ready => (),
@@ -616,7 +637,7 @@ mod tests {
             .write_slice(StorageIndex { page: 0, byte: 0 }, &[0x5c; 8])
             .unwrap();
         // The delay should be decremented.
-        assert_eq!(buffer.unarm_interruption(), 0);
+        assert_eq!(buffer.disarm_interruption(), 0);
         // The storage should have been modified.
         assert_eq!(&buffer.storage[..8], &[0x5c; 8]);
         assert!(buffer.storage[8..].iter().all(|&x| x == 0xff));

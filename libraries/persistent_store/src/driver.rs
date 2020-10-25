@@ -20,15 +20,23 @@ use crate::{
     StoreModel, StoreOperation, StoreResult,
 };
 
+/// Tracks the store behavior against its model and its storage.
 #[derive(Clone)]
 pub enum StoreDriver {
+    /// When the store is running.
     On(StoreDriverOn),
+
+    /// When the store is off.
     Off(StoreDriverOff),
 }
 
+/// Keeps a store and its model in sync.
 #[derive(Clone)]
 pub struct StoreDriverOn {
+    /// The store being tracked.
     store: Store<BufferStorage>,
+
+    /// The model associated to the store.
     model: StoreModel,
 }
 

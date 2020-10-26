@@ -152,8 +152,7 @@ impl<'a> Fuzzer<'a> {
             println!("Power on the store.");
         }
         self.increment(StatKey::PowerOnCount);
-        let delay_map = self.delay_map(driver.delay_map());
-        let interruption = self.interruption(&delay_map);
+        let interruption = self.interruption(driver.delay_map());
         match driver.partial_power_on(interruption) {
             Err((storage, _)) if self.init.is_dirty() => {
                 self.entropy.consume_all();
@@ -169,8 +168,7 @@ impl<'a> Fuzzer<'a> {
         if self.debug {
             println!("{:?}", operation);
         }
-        let delay_map = self.delay_map(driver.delay_map(&operation));
-        let interruption = self.interruption(&delay_map);
+        let interruption = self.interruption(driver.delay_map(&operation));
         match driver.partial_apply(operation, interruption) {
             Err((store, _)) if self.init.is_dirty() => {
                 self.entropy.consume_all();
@@ -195,17 +193,6 @@ impl<'a> Fuzzer<'a> {
             print!("{}", storage);
         }
         panic!("{:?}", invariant);
-    }
-
-    fn delay_map(&self, delay_map: Result<Vec<usize>, (usize, BufferStorage)>) -> Vec<usize> {
-        match delay_map {
-            Ok(x) => x,
-            Err(_) if self.init.is_dirty() => vec![0],
-            Err((delay, storage)) => {
-                print!("{}", storage);
-                panic!("delay={}", delay);
-            }
-        }
     }
 
     fn record(&mut self, key: StatKey, value: usize) {
@@ -294,7 +281,23 @@ impl<'a> Fuzzer<'a> {
         value
     }
 
-    fn interruption(&mut self, delay_map: &[usize]) -> StoreInterruption {
+    fn interruption(
+        &mut self,
+        delay_map: Result<Vec<usize>, (usize, BufferStorage)>,
+    ) -> StoreInterruption {
+        if self.init.is_dirty() {
+            // We only test that the store can power on without crashing. If it would get
+            // interrupted then it's like powering up with a different initial state, which would be
+            // tested with another fuzzing input.
+            return StoreInterruption::none();
+        }
+        let delay_map = match delay_map {
+            Ok(x) => x,
+            Err((delay, storage)) => {
+                print!("{}", storage);
+                panic!("delay={}", delay);
+            }
+        };
         let delay = self.entropy.read_range(0, delay_map.len() - 1);
         let mut complete_bits = BitStack::default();
         for _ in 0..delay_map[delay] {

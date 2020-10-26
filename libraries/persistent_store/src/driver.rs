@@ -493,7 +493,7 @@ impl StoreDriverOn {
 }
 
 impl<'a> StoreInterruption<'a> {
-    fn none() -> StoreInterruption<'a> {
+    pub fn none() -> StoreInterruption<'a> {
         StoreInterruption {
             delay: usize::max_value(),
             corrupt: Box::new(|_, _| {}),

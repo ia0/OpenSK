@@ -8,13 +8,6 @@ edition = "2018"
 [package.metadata]
 cargo-fuzz = true
 
-[features]
-default = ["init"]
-init = ["init_clean", "init_used", "init_dirty"]
-init_clean = []
-init_used = []
-init_dirty = []
-
 [dependencies.persistent_store]
 path = ".."
 features = ["std"]

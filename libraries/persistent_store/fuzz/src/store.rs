@@ -28,13 +28,6 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
     fuzzer.init_counters();
     fuzzer.record(StatKey::Entropy, data.len());
     let mut driver = fuzzer.init();
-    // Exit early from disabled scenarios.
-    match fuzzer.init {
-        Init::Clean if cfg!(init_clean) => (),
-        Init::Used { .. } if cfg!(init_used) => (),
-        Init::Dirty if cfg!(init_dirty) => (),
-        _ => return,
-    }
     let store = loop {
         if fuzzer.debug {
             print!("{}", driver.storage());

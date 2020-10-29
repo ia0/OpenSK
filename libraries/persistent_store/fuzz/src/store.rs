@@ -67,7 +67,7 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
             StoreDriver::Off(driver) => fuzzer.power_on(driver),
         }
     };
-    let virt_window = store.format().num_pages() * store.format().virt_page_size();
+    let virt_window = (store.format().num_pages() * store.format().virt_page_size()) as usize;
     let init_lifetime = fuzzer.init.used_cycles() * virt_window;
     let lifetime = store.lifetime().unwrap().used - init_lifetime;
     fuzzer.record(StatKey::Lifetime, lifetime);
@@ -227,8 +227,9 @@ impl<'a> Fuzzer<'a> {
         let format = driver.model().format();
         match self.entropy.read_range(0, 2) {
             0 => {
+                let max_updates = format.max_updates() as usize;
                 // Use one past as the canonical invalid number of updates.
-                let count = self.entropy.read_range(0, format.max_updates() + 1);
+                let count = self.entropy.read_range(0, max_updates + 1);
                 let mut updates = Vec::with_capacity(count);
                 for _ in 0..count {
                     updates.push(self.update());
@@ -242,8 +243,9 @@ impl<'a> Fuzzer<'a> {
                 StoreOperation::Clear { min_key }
             }
             2 => {
+                let total_capacity = format.total_capacity() as usize;
                 // Use one past as the canonical invalid required capacity.
-                let length = self.entropy.read_range(0, format.total_capacity() + 1);
+                let length = self.entropy.read_range(0, total_capacity + 1);
                 self.increment(StatKey::PrepareCount);
                 StoreOperation::Prepare { length }
             }

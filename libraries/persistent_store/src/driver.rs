@@ -16,7 +16,7 @@ use crate::format::{Format, Position};
 #[cfg(test)]
 use crate::StoreUpdate;
 use crate::{
-    BufferCorruptFunction, BufferOptions, BufferStorage, Store, StoreError, StoreHandle,
+    BufferCorruptFunction, BufferOptions, BufferStorage, Nat, Store, StoreError, StoreHandle,
     StoreModel, StoreOperation, StoreResult,
 };
 
@@ -431,16 +431,16 @@ impl StoreDriverOn {
         let tail = self.store.tail().unwrap();
         for page in 0..format.num_pages() {
             // Check the erase cycle of the page.
-            let store_erase = head.cycle(format) + (page < head.page(format)) as usize;
-            let model_erase = storage.get_page_erases(page);
+            let store_erase = (head.cycle(format) + (page < head.page(format)) as Nat) as usize;
+            let model_erase = storage.get_page_erases(page as usize);
             if store_erase != model_erase {
                 return Err(StoreInvariant::DifferentErase {
-                    page,
+                    page: page as usize,
                     store: store_erase,
                     model: model_erase,
                 });
             }
-            let page_pos = Position::new(format, model_erase, page, 0);
+            let page_pos = Position::new(format, model_erase as Nat, page, 0);
 
             // Check the init word of the page.
             let mut store_write = (page_pos < tail) as usize;
@@ -449,10 +449,10 @@ impl StoreDriverOn {
                 // initialized.
                 store_write = 1;
             }
-            let model_write = storage.get_word_writes(page * num_words);
+            let model_write = storage.get_word_writes((page * num_words) as usize);
             if store_write != model_write {
                 return Err(StoreInvariant::DifferentWrite {
-                    page,
+                    page: page as usize,
                     word: 0,
                     store: store_write,
                     model: model_write,
@@ -460,11 +460,11 @@ impl StoreDriverOn {
             }
 
             // Check the compact info of the page.
-            let model_write = storage.get_word_writes(page * num_words + 1);
+            let model_write = storage.get_word_writes((page * num_words + 1) as usize);
             let store_write = 0;
             if store_write != model_write {
                 return Err(StoreInvariant::DifferentWrite {
-                    page,
+                    page: page as usize,
                     word: 1,
                     store: store_write,
                     model: model_write,
@@ -477,11 +477,12 @@ impl StoreDriverOn {
             // written and not how many times. This is because this is hard to rebuild in the store.
             for word in 2..num_words {
                 let store_write = (page_pos + (word - 2) < tail) as usize;
-                let model_write = (storage.get_word_writes(page * num_words + word) > 0) as usize;
+                let model_write =
+                    (storage.get_word_writes((page * num_words + word) as usize) > 0) as usize;
                 if store_write < model_write {
                     return Err(StoreInvariant::DifferentWrite {
-                        page,
-                        word,
+                        page: page as usize,
+                        word: word as usize,
                         store: store_write,
                         model: model_write,
                     });

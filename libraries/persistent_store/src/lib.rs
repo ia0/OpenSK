@@ -393,4 +393,5 @@ pub use self::store::{
 /// with Rust, `usize` is used instead of `Nat` in code meant only for tests.
 ///
 /// Currently, the store only supports targets with `usize = u32`.
+// TODO: Also fix endianness.
 type Nat = u32;

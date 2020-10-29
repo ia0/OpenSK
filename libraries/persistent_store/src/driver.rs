@@ -389,10 +389,10 @@ impl StoreDriverOn {
     }
 
     fn check_model(&self) -> Result<(), StoreInvariant> {
-        let mut model_map = self.model.map().clone();
+        let mut model_content = self.model.content().clone();
         for handle in self.store.iter().unwrap() {
             let handle = handle.unwrap();
-            let model_value = match model_map.remove(&handle.get_key()) {
+            let model_value = match model_content.remove(&handle.get_key()) {
                 None => {
                     return Err(StoreInvariant::OnlyInStore {
                         key: handle.get_key(),
@@ -409,7 +409,7 @@ impl StoreDriverOn {
                 });
             }
         }
-        if let Some(&key) = model_map.keys().next() {
+        if let Some(&key) = model_content.keys().next() {
             return Err(StoreInvariant::OnlyInModel { key });
         }
         let store_capacity = self.store.capacity().unwrap().remaining();

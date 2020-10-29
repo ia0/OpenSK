@@ -69,7 +69,7 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
     };
     let virt_window = (store.format().num_pages() * store.format().virt_page_size()) as usize;
     let init_lifetime = fuzzer.init.used_cycles() * virt_window;
-    let lifetime = store.lifetime().unwrap().used - init_lifetime;
+    let lifetime = store.lifetime().unwrap().used() - init_lifetime;
     fuzzer.record(StatKey::Lifetime, lifetime);
     fuzzer.record(StatKey::Compaction, lifetime / virt_window);
     fuzzer.record_counters();

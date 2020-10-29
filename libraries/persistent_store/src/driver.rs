@@ -431,16 +431,16 @@ impl StoreDriverOn {
         let tail = self.store.tail().unwrap();
         for page in 0..format.num_pages() {
             // Check the erase cycle of the page.
-            let store_erase = (head.cycle(format) + (page < head.page(format)) as Nat) as usize;
+            let store_erase = head.cycle(format) + (page < head.page(format)) as Nat;
             let model_erase = storage.get_page_erases(page as usize);
-            if store_erase != model_erase {
+            if store_erase as usize != model_erase {
                 return Err(StoreInvariant::DifferentErase {
                     page: page as usize,
-                    store: store_erase,
+                    store: store_erase as usize,
                     model: model_erase,
                 });
             }
-            let page_pos = Position::new(format, model_erase as Nat, page, 0);
+            let page_pos = Position::new(format, store_erase, page, 0);
 
             // Check the init word of the page.
             let mut store_write = (page_pos < tail) as usize;

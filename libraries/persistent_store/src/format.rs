@@ -35,11 +35,22 @@ type WORD = u32;
 pub struct Word(WORD);
 
 /// Byte slice representation of a word in flash.
+///
+/// The slice is in little-endian representation.
 pub type WordSlice = [u8; core::mem::size_of::<WORD>()];
 
 impl Word {
+    /// Converts a word slice into a word.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `slice.len() != WORD_SIZE`.
+    pub fn from_slice(slice: &[u8]) -> Word {
+        Word(WORD::from_le_bytes(<WordSlice>::try_from(slice).unwrap()))
+    }
+
     pub fn as_slice(&self) -> WordSlice {
-        self.0.to_ne_bytes()
+        self.0.to_le_bytes()
     }
 }
 
@@ -845,15 +856,6 @@ pub enum InternalEntry {
     },
 }
 
-/// Converts a word slice into a word.
-///
-/// # Panics
-///
-/// Panics if `word.len()` is not the number of bytes in a word.
-pub fn slice_to_word(word: &[u8]) -> Word {
-    Word(WORD::from_ne_bytes(<[u8; 4]>::try_from(word).unwrap()))
-}
-
 /// Returns whether a slice has all bits equal to one.
 pub fn is_erased(slice: &[u8]) -> bool {
     slice.iter().all(|&x| x == 0xff)
@@ -973,16 +975,15 @@ mod tests {
     }
 
     #[test]
-    fn slice_to_word_ok() {
-        // We write test with little-endian in mind, but use this helper function to test regardless
-        // of endianness.
-        fn test(slice: &[u8], word: u32) {
-            #[cfg(target_endian = "little")]
-            let word = word.swap_bytes();
-            assert_eq!(slice_to_word(slice), Word(word));
-        }
-        test(&[0x01, 0x02, 0x03, 0x04], 0x01020304);
-        test(&[0xf0, 0x78, 0x3c, 0x1e], 0xf0783c1e);
+    fn word_from_slice_ok() {
+        assert_eq!(
+            Word::from_slice(&[0x04, 0x03, 0x02, 0x01]),
+            Word(0x01020304)
+        );
+        assert_eq!(
+            Word::from_slice(&[0x1e, 0x3c, 0x78, 0xf0]),
+            Word(0xf0783c1e)
+        );
     }
 
     #[test]

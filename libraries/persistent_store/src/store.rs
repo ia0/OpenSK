@@ -820,7 +820,7 @@ impl<S: Storage> Store<S> {
 
     /// Sets the padding bit of a user header.
     fn set_padding(&mut self, pos: Position) -> StoreResult<()> {
-        let mut word = slice_to_word(self.read_word(pos));
+        let mut word = Word::from_slice(self.read_word(pos));
         self.format.set_padding(&mut word);
         self.write_slice(pos, &word.as_slice())?;
         Ok(())
@@ -828,7 +828,7 @@ impl<S: Storage> Store<S> {
 
     /// Sets the deleted bit of a user header.
     fn set_deleted(&mut self, pos: Position) -> StoreResult<()> {
-        let mut word = slice_to_word(self.read_word(pos));
+        let mut word = Word::from_slice(self.read_word(pos));
         self.format.set_deleted(&mut word);
         self.write_slice(pos, &word.as_slice())?;
         Ok(())
@@ -956,19 +956,20 @@ impl<S: Storage> Store<S> {
     fn parse_init(&self, page: Nat) -> StoreResult<WordState<InitInfo>> {
         let index = self.format.index_init(page);
         let word = self.storage_read_slice(index, self.format.word_size());
-        self.format.parse_init(slice_to_word(word))
+        self.format.parse_init(Word::from_slice(word))
     }
 
     /// Parses the compact info of a page.
     fn parse_compact(&self, page: Nat) -> StoreResult<WordState<CompactInfo>> {
         let index = self.format.index_compact(page);
         let word = self.storage_read_slice(index, self.format.word_size());
-        self.format.parse_compact(slice_to_word(word))
+        self.format.parse_compact(Word::from_slice(word))
     }
 
     /// Parses a word from the virtual storage.
     fn parse_word(&self, pos: Position) -> StoreResult<WordState<ParsedWord>> {
-        self.format.parse_word(slice_to_word(self.read_word(pos)))
+        self.format
+            .parse_word(Word::from_slice(self.read_word(pos)))
     }
 
     /// Reads a slice from the virtual storage.
@@ -1031,17 +1032,17 @@ impl<S: Storage> Store<S> {
         debug_assert!(usize_to_nat!(value.len()) % word_size == 0);
         let slice = self.storage.read_slice(index, value.len())?;
         // Skip as many words that don't need to be written as possible.
-        for start in (0..value.len()).step_by(word_size as usize) {
+        for start in (0..usize_to_nat!(value.len())).step_by(word_size as usize) {
             if is_write_needed(
-                &slice[start..][..word_size as usize],
-                &value[start..][..word_size as usize],
+                &slice[start as usize..][..word_size as usize],
+                &value[start as usize..][..word_size as usize],
             )? {
                 // We must write the remaining slice.
                 let index = StorageIndex {
                     page: index.page,
-                    byte: index.byte + start,
+                    byte: (usize_to_nat!(index.byte) + start) as usize,
                 };
-                let value = &value[start..];
+                let value = &value[start as usize..];
                 self.storage.write_slice(index, value)?;
                 break;
             }

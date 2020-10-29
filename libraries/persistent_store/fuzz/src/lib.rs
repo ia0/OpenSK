@@ -79,6 +79,19 @@ impl Entropy<'_> {
         let delta = self.read_bits(num_bits(width)) % (width + 1);
         min + delta
     }
+
+    /// Reads a possibly invalid number between `min` and `max`.
+    ///
+    /// In addition to valid values between `min` and `max`, a call may also return any of the
+    /// following invalid values: `max + 1` and `u32::MAX`.
+    pub fn read_range_overflow(&mut self, min: usize, max: usize) -> usize {
+        let value = self.read_range(min, max + 2);
+        if value > 0 {
+            value - 1
+        } else {
+            u32::MAX as usize
+        }
+    }
 }
 
 /// Returns the number of bits necessary to represent `x`.

@@ -80,13 +80,14 @@ impl StoreModel {
     pub fn capacity(&self) -> StoreRatio {
         let total = self.format.total_capacity();
         let used: usize = self.content.values().map(|x| self.entry_size(x)).sum();
+        let used = usize_to_nat!(used);
         StoreRatio { used, total }
     }
 
     /// Applies a transaction.
     fn transaction(&mut self, updates: Vec<StoreUpdate>) -> StoreResult<()> {
         // Fail if too many updates.
-        if updates.len() > self.format.max_updates() {
+        if updates.len() > self.format.max_updates() as usize {
             return Err(StoreError::InvalidArgument);
         }
         // Fail if an update is invalid.
@@ -130,7 +131,7 @@ impl StoreModel {
 
     /// Applies a clear operation.
     fn clear(&mut self, min_key: usize) -> StoreResult<()> {
-        if min_key > self.format.max_key() {
+        if min_key > self.format.max_key() as usize {
             return Err(StoreError::InvalidArgument);
         }
         self.content.retain(|&k, _| k < min_key);
@@ -155,14 +156,14 @@ impl StoreModel {
 
     /// Returns the word capacity of an entry.
     fn entry_size(&self, value: &[u8]) -> usize {
-        1 + self.format.bytes_to_words(value.len())
+        1 + self.format.bytes_to_words(usize_to_nat!(value.len())) as usize
     }
 
     /// Returns whether an update is valid.
     fn update_valid(&self, update: &StoreUpdate) -> bool {
-        update.key() <= self.format.max_key()
+        update.key() <= self.format.max_key() as usize
             && update
                 .value()
-                .map_or(true, |x| x.len() <= self.format.max_value_len())
+                .map_or(true, |x| x.len() <= self.format.max_value_len() as usize)
     }
 }

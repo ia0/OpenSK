@@ -227,9 +227,12 @@ impl<'a> Fuzzer<'a> {
         let format = driver.model().format();
         match self.entropy.read_range(0, 2) {
             0 => {
+                // We also generate an invalid count (one past the maximum value) to test the error
+                // scenario. Since the test for the error scenario is monotonic, this is a good
+                // compromise to keep entropy bounded.
                 let count = self
                     .entropy
-                    .read_range_overflow(0, format.max_updates() as usize);
+                    .read_range(0, format.max_updates() as usize + 1);
                 let mut updates = Vec::with_capacity(count);
                 for _ in 0..count {
                     updates.push(self.update());
@@ -243,9 +246,11 @@ impl<'a> Fuzzer<'a> {
                 StoreOperation::Clear { min_key }
             }
             2 => {
+                // We also generate an invalid length (one past the total capacity) to test the
+                // error scenario. See the explanation for transactions above for why it's enough.
                 let length = self
                     .entropy
-                    .read_range_overflow(0, format.total_capacity() as usize);
+                    .read_range(0, format.total_capacity() as usize + 1);
                 self.increment(StatKey::PrepareCount);
                 StoreOperation::Prepare { length }
             }

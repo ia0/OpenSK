@@ -390,7 +390,8 @@ impl<S: Storage> Store<S> {
     pub fn insert(&mut self, key: usize, value: &[u8]) -> StoreResult<()> {
         // NOTE: This (and transaction) could take a position hint on the value to delete.
         let key = usize_to_nat!(key);
-        if key > self.format.max_key() || usize_to_nat!(value.len()) > self.format.max_value_len() {
+        let value_len = usize_to_nat!(value.len());
+        if key > self.format.max_key() || value_len > self.format.max_value_len() {
             return Err(StoreError::InvalidArgument);
         }
         let entry = self.format.build_user(key, value);

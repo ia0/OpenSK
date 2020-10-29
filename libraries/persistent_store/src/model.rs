@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::format::Format;
-use crate::{StoreError, StoreRatio, StoreResult, StoreUpdate};
+use crate::{usize_to_nat, StoreError, StoreRatio, StoreResult, StoreUpdate};
 use std::collections::{HashMap, HashSet};
 
 /// Models the mutable operations of a store.
@@ -79,8 +79,7 @@ impl StoreModel {
     /// Returns the capacity according to the model.
     pub fn capacity(&self) -> StoreRatio {
         let total = self.format.total_capacity();
-        let used: usize = self.content.values().map(|x| self.entry_size(x)).sum();
-        let used = usize_to_nat!(used);
+        let used = usize_to_nat(self.content.values().map(|x| self.entry_size(x)).sum());
         StoreRatio { used, total }
     }
 
@@ -156,7 +155,7 @@ impl StoreModel {
 
     /// Returns the word capacity of an entry.
     fn entry_size(&self, value: &[u8]) -> usize {
-        1 + self.format.bytes_to_words(usize_to_nat!(value.len())) as usize
+        1 + self.format.bytes_to_words(usize_to_nat(value.len())) as usize
     }
 
     /// Returns whether an update is valid.

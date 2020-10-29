@@ -16,7 +16,7 @@
 mod bitfield;
 
 use self::bitfield::*;
-use crate::{Nat, Storage, StorageIndex, StoreError, StoreResult};
+use crate::{usize_to_nat, Nat, Storage, StorageIndex, StoreError, StoreResult};
 use alloc::vec::Vec;
 use core::cmp::min;
 use core::convert::TryFrom;
@@ -40,7 +40,7 @@ pub struct Word(WORD);
 pub type WordSlice = [u8; core::mem::size_of::<WORD>()];
 
 impl Word {
-    /// Converts a word slice into a word.
+    /// Converts a byte slice into a word.
     ///
     /// # Panics
     ///
@@ -49,7 +49,8 @@ impl Word {
         Word(WORD::from_le_bytes(<WordSlice>::try_from(slice).unwrap()))
     }
 
-    pub fn as_slice(&self) -> WordSlice {
+    /// Converts a word into a byte slice.
+    pub fn as_slice(self) -> WordSlice {
         self.0.to_le_bytes()
     }
 }
@@ -147,9 +148,9 @@ impl Format {
     pub fn new<S: Storage>(storage: &S) -> Option<Format> {
         if Format::is_storage_supported(storage) {
             Some(Format {
-                page_size: usize_to_nat!(storage.page_size()),
-                num_pages: usize_to_nat!(storage.num_pages()),
-                max_page_erases: usize_to_nat!(storage.max_page_erases()),
+                page_size: usize_to_nat(storage.page_size()),
+                num_pages: usize_to_nat(storage.num_pages()),
+                max_page_erases: usize_to_nat(storage.max_page_erases()),
             })
         } else {
             None
@@ -175,11 +176,11 @@ impl Format {
     /// [`MAX_PAGE_INDEX`]: constant.MAX_PAGE_INDEX.html
     /// [`MAX_ERASE_CYCLE`]: constant.MAX_ERASE_CYCLE.html
     fn is_storage_supported<S: Storage>(storage: &S) -> bool {
-        let word_size = usize_to_nat!(storage.word_size());
-        let page_size = usize_to_nat!(storage.page_size());
-        let num_pages = usize_to_nat!(storage.num_pages());
-        let max_word_writes = usize_to_nat!(storage.max_word_writes());
-        let max_page_erases = usize_to_nat!(storage.max_page_erases());
+        let word_size = usize_to_nat(storage.word_size());
+        let page_size = usize_to_nat(storage.page_size());
+        let num_pages = usize_to_nat(storage.num_pages());
+        let max_word_writes = usize_to_nat(storage.max_word_writes());
+        let max_page_erases = usize_to_nat(storage.max_page_erases());
         word_size == WORD_SIZE
             && page_size % word_size == 0
             && (MIN_NUM_WORDS_PER_PAGE * word_size <= page_size && page_size <= MAX_PAGE_SIZE)
@@ -457,7 +458,7 @@ impl Format {
 
     /// Builds the storage representation of a user entry.
     pub fn build_user(&self, key: Nat, value: &[u8]) -> Vec<u8> {
-        let length = usize_to_nat!(value.len());
+        let length = usize_to_nat(value.len());
         let word_size = self.word_size();
         let footer = self.bytes_to_words(length);
         let mut result = vec![0xff; ((1 + footer) * word_size) as usize];

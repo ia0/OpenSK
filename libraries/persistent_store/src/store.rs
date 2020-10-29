@@ -88,26 +88,26 @@ pub type StoreResult<T> = Result<T, StoreError>;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct StoreRatio {
     /// How much of the metric is used.
-    pub(crate) used: usize,
+    pub(crate) used: Nat,
 
     /// How much of the metric can be used at most.
-    pub(crate) total: usize,
+    pub(crate) total: Nat,
 }
 
 impl StoreRatio {
     /// How much of the metric is used.
     pub fn used(self) -> usize {
-        self.used
+        self.used as usize
     }
 
     /// How much of the metric can be used at most.
     pub fn total(self) -> usize {
-        self.total
+        self.total as usize
     }
 
     /// How much of the metric is remaining.
     pub fn remaining(self) -> usize {
-        self.total - self.used
+        (self.total - self.used) as usize
     }
 }
 
@@ -225,10 +225,7 @@ impl<S: Storage> Store<S> {
                 _ => return Err(StoreError::InvalidStorage),
             }
         }
-        Ok(StoreRatio {
-            used: used as usize,
-            total: total as usize,
-        })
+        Ok(StoreRatio { used, total })
     }
 
     /// Returns the current lifetime in words.
@@ -239,10 +236,7 @@ impl<S: Storage> Store<S> {
     pub fn lifetime(&self) -> StoreResult<StoreRatio> {
         let total = self.format.total_lifetime().get();
         let used = self.tail()?.get();
-        Ok(StoreRatio {
-            used: used as usize,
-            total: total as usize,
-        })
+        Ok(StoreRatio { used, total })
     }
 
     /// Applies a sequence of updates as a single transaction.

@@ -78,8 +78,9 @@ impl StoreModel {
 
     /// Returns the capacity according to the model.
     pub fn capacity(&self) -> StoreRatio {
-        let total = self.format.total_capacity() as usize;
+        let total = self.format.total_capacity();
         let used: usize = self.content.values().map(|x| self.entry_size(x)).sum();
+        let used = usize_to_nat!(used);
         StoreRatio { used, total }
     }
 

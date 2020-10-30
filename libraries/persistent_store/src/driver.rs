@@ -30,7 +30,7 @@ pub enum StoreDriver {
     Off(StoreDriverOff),
 }
 
-/// Keeps a store and its model in sync.
+/// Keeps a power-on store and its model in sync.
 #[derive(Clone)]
 pub struct StoreDriverOn {
     /// The store being tracked.
@@ -40,70 +40,149 @@ pub struct StoreDriverOn {
     model: StoreModel,
 }
 
+/// Keeps a power-off store and its potential models in sync.
 #[derive(Clone)]
 pub struct StoreDriverOff {
+    /// The storage of the store being tracked.
     storage: BufferStorage,
+
+    /// The last valid model before power off.
     model: StoreModel,
-    /// Invariant if the interrupted operation would complete.
+
+    /// In case of interrupted operation, the invariant after completion.
     complete: Option<Complete>,
 }
 
+/// The invariant a store must satisfy if an interrupted operation completes.
 #[derive(Clone)]
 struct Complete {
+    /// The model after the operation completes.
     model: StoreModel,
+
+    /// The entries that should be deleted after the operation completes.
     deleted: Vec<StoreHandle>,
 }
 
+/// Specifies an interruption.
 pub struct StoreInterruption<'a> {
+    /// After how many storage operations the interruption should happen.
     pub delay: usize,
+
+    /// How the interrupted operation should be corrupted.
     pub corrupt: BufferCorruptFunction<'a>,
 }
 
+/// Possible ways a driver operation may fail.
 #[derive(Debug)]
 pub enum StoreInvariant {
+    /// The store reached its lifetime.
+    ///
+    /// This is not simulated by the model. So the operation should be ignored.
     NoLifetime,
+
+    /// The store returned an unexpected error.
     StoreError(StoreError),
+
+    /// The store did not recover an interrupted operation.
     Interrupted {
+        /// The reason why the store didn't rollback the operation.
         rollback: Box<StoreInvariant>,
+
+        /// The reason why the store didn't complete the operation.
         complete: Box<StoreInvariant>,
     },
+
+    /// The store returned a different result than the model.
     DifferentResult {
+        /// The result of the store.
         store: StoreResult<()>,
+
+        /// The result of the model.
         model: StoreResult<()>,
     },
+
+    /// The store did not wipe an entry.
     NotWiped {
+        /// The key of the entry that has not been wiped.
         key: usize,
+
+        /// The value of the entry in the storage.
         value: Vec<u8>,
     },
+
+    /// The store has an entry not present in the model.
     OnlyInStore {
+        /// The key of the additional entry.
         key: usize,
     },
+
+    /// The store has a different value than the model for an entry.
     DifferentValue {
+        /// The key of the entry with a different value.
         key: usize,
+
+        /// The value of the entry in the store.
         store: Box<[u8]>,
+
+        /// The value of the entry in the model.
         model: Box<[u8]>,
     },
+
+    /// The store is missing an entry from the model.
     OnlyInModel {
+        /// The key of the missing entry.
         key: usize,
     },
+
+    /// The store reports a different capacity than the model.
     DifferentCapacity {
+        /// The capacity according to the store.
         store: usize,
+
+        /// The capacity according to the model.
         model: usize,
     },
+
+    /// The store failed to track the number of erase cycles correctly.
     DifferentErase {
+        /// The first page in physical storage order with a wrong value.
         page: usize,
+
+        /// How many times the page has been erased according to the store.
         store: usize,
+
+        /// How many times the page has been erased according to the model.
         model: usize,
     },
+
+    /// The store failed to track the number of word writes correctly.
     DifferentWrite {
+        /// The first page in physical storage order with a wrong value.
         page: usize,
+
+        /// The first word in the page with a wrong value.
         word: usize,
+
+        /// How many times the word has been written according to the store.
+        ///
+        /// This value is exact only for the metadata of the page. For the content of the page, it
+        /// is set to:
+        /// - 0 if the word is after the tail. Such word should not have been written.
+        /// - 1 if the word is before the tail. Such word may or may not have been written.
         store: usize,
+
+        /// How many times the word has been written according to the model.
+        ///
+        /// This value is exact only for the metadata of the page. For the content of the page, it
+        /// is set to:
+        /// - 0 if the word was not written.
+        /// - 1 if the word was written.
         model: usize,
     },
 }
 
 impl StoreDriver {
+    /// Provides read-only access to the storage.
     pub fn storage(&self) -> &BufferStorage {
         match self {
             StoreDriver::On(x) => x.store().storage(),
@@ -111,6 +190,7 @@ impl StoreDriver {
         }
     }
 
+    /// Extracts the power-on version of the driver.
     pub fn on(self) -> Option<StoreDriverOn> {
         match self {
             StoreDriver::On(x) => Some(x),
@@ -118,6 +198,7 @@ impl StoreDriver {
         }
     }
 
+    /// Powers on the store if not already on.
     pub fn power_on(self) -> Result<StoreDriverOn, StoreInvariant> {
         match self {
             StoreDriver::On(x) => Ok(x),
@@ -125,6 +206,7 @@ impl StoreDriver {
         }
     }
 
+    /// Extracts the power-off version of the driver.
     pub fn off(self) -> Option<StoreDriverOff> {
         match self {
             StoreDriver::On(_) => None,
@@ -134,12 +216,14 @@ impl StoreDriver {
 }
 
 impl StoreDriverOff {
+    /// Starts a simulation with a clean storage given its configuration.
     pub fn new(options: BufferOptions, num_pages: usize) -> StoreDriverOff {
         let storage = vec![0xff; num_pages * options.page_size].into_boxed_slice();
         let storage = BufferStorage::new(storage, options);
         StoreDriverOff::new_dirty(storage)
     }
 
+    /// Starts a simulation from an existing storage.
     pub fn new_dirty(storage: BufferStorage) -> StoreDriverOff {
         let format = Format::new(&storage).unwrap();
         StoreDriverOff {
@@ -149,18 +233,22 @@ impl StoreDriverOff {
         }
     }
 
+    /// Provides read-only access to the storage.
     pub fn storage(&self) -> &BufferStorage {
         &self.storage
     }
 
+    /// Provides mutable access to the storage.
     pub fn storage_mut(&mut self) -> &mut BufferStorage {
         &mut self.storage
     }
 
+    /// Provides read-only access to the model.
     pub fn model(&self) -> &StoreModel {
         &self.model
     }
 
+    /// Powers on the store without interruption.
     pub fn power_on(self) -> Result<StoreDriverOn, StoreInvariant> {
         Ok(self
             .partial_power_on(StoreInterruption::none())
@@ -169,6 +257,7 @@ impl StoreDriverOff {
             .unwrap())
     }
 
+    /// Powers on the store with a possible interruption.
     pub fn partial_power_on(
         mut self,
         interruption: StoreInterruption,
@@ -235,22 +324,27 @@ impl StoreDriverOff {
 }
 
 impl StoreDriverOn {
+    /// Provides read-only access to the store.
     pub fn store(&self) -> &Store<BufferStorage> {
         &self.store
     }
 
+    /// Extracts the store.
     pub fn into_store(self) -> Store<BufferStorage> {
         self.store
     }
 
+    /// Provides mutable access to the store.
     pub fn store_mut(&mut self) -> &mut Store<BufferStorage> {
         &mut self.store
     }
 
+    /// Provides read-only access to the model.
     pub fn model(&self) -> &StoreModel {
         &self.model
     }
 
+    /// Applies a store operation to the store and model without interruption.
     pub fn apply(&mut self, operation: StoreOperation) -> Result<(), StoreInvariant> {
         let (deleted, store_result) = self.store.apply(&operation);
         let model_result = self.model.apply(operation);
@@ -264,6 +358,7 @@ impl StoreDriverOn {
         Ok(())
     }
 
+    /// Applies a store operation to the store and model with a possible interruption.
     pub fn partial_apply(
         mut self,
         operation: StoreOperation,
@@ -311,6 +406,7 @@ impl StoreDriverOn {
         })
     }
 
+    /// Returns a mapping from delay time to number of modified bits.
     pub fn delay_map(
         &self,
         operation: &StoreOperation,
@@ -331,6 +427,7 @@ impl StoreDriverOn {
         Ok(result)
     }
 
+    /// Powers off the store.
     pub fn power_off(self) -> StoreDriverOff {
         StoreDriverOff {
             storage: self.store.into_storage(),
@@ -339,6 +436,7 @@ impl StoreDriverOn {
         }
     }
 
+    /// Applies an insertion to the store and model without interruption.
     #[cfg(test)]
     pub fn insert(&mut self, key: usize, value: &[u8]) -> Result<(), StoreInvariant> {
         let value = value.to_vec();
@@ -346,16 +444,21 @@ impl StoreDriverOn {
         self.apply(StoreOperation::Transaction { updates })
     }
 
+    /// Applies a deletion to the store and model without interruption.
     #[cfg(test)]
     pub fn remove(&mut self, key: usize) -> Result<(), StoreInvariant> {
         let updates = vec![StoreUpdate::Remove { key }];
         self.apply(StoreOperation::Transaction { updates })
     }
 
+    /// Checks that the store and model are in sync.
     pub fn check(&self) -> Result<(), StoreInvariant> {
         self.recover_check(&[])
     }
 
+    /// Starts a simulation from a power-off store.
+    ///
+    /// Checks that the store and model are in sync and that the given deleted entries are wiped.
     fn new(
         store: Store<BufferStorage>,
         model: StoreModel,
@@ -368,6 +471,7 @@ impl StoreDriverOn {
         }
     }
 
+    /// Checks that the store and model are in sync and that the given entries are wiped.
     fn recover_check(&self, deleted: &[StoreHandle]) -> Result<(), StoreInvariant> {
         self.check_deleted(deleted)?;
         self.check_model()?;
@@ -375,6 +479,7 @@ impl StoreDriverOn {
         Ok(())
     }
 
+    /// Checks that the given entries are wiped from the storage.
     fn check_deleted(&self, deleted: &[StoreHandle]) -> Result<(), StoreInvariant> {
         for handle in deleted {
             let value = self.store.inspect_value(&handle);
@@ -388,6 +493,7 @@ impl StoreDriverOn {
         Ok(())
     }
 
+    /// Checks that the store and model are in sync.
     fn check_model(&self) -> Result<(), StoreInvariant> {
         let mut model_content = self.model.content().clone();
         for handle in self.store.iter().unwrap() {
@@ -423,6 +529,7 @@ impl StoreDriverOn {
         Ok(())
     }
 
+    /// Checks that the store is tracking lifetime correctly.
     fn check_storage(&self) -> Result<(), StoreInvariant> {
         let format = self.model.format();
         let storage = self.store.storage();
@@ -494,6 +601,7 @@ impl StoreDriverOn {
 }
 
 impl<'a> StoreInterruption<'a> {
+    /// Builds an interruption that never triggers.
     pub fn none() -> StoreInterruption<'a> {
         StoreInterruption {
             delay: usize::max_value(),
@@ -502,6 +610,11 @@ impl<'a> StoreInterruption<'a> {
     }
 }
 
+/// Counts the number of bits modified by an interrupted operation.
+///
+/// # Panics
+///
+/// Panics if an interruption did not trigger.
 fn count_modified_bits(storage: &mut BufferStorage) -> usize {
     let mut modified_bits = 0;
     storage.corrupt_operation(Box::new(|before, after| {

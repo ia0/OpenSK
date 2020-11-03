@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::format::*;
+use crate::format::{
+    is_erased, CompactInfo, Format, Header, InitInfo, InternalEntry, Padding, ParsedWord, Position,
+    Word, WordState,
+};
 #[cfg(feature = "std")]
 pub use crate::model::{StoreModel, StoreOperation};
 use crate::{usize_to_nat, Nat, Storage, StorageError, StorageIndex};
@@ -258,31 +261,13 @@ impl<S: Storage> Store<S> {
                 StoreUpdate::Remove { key } => return self.remove(key),
             }
         }
-        if count > self.format.max_updates() {
-            return Err(StoreError::InvalidArgument);
-        }
-        // Compute how much capacity (including transient) we need.
-        let mut sorted_keys = Vec::with_capacity(count as usize);
-        let mut word_capacity = 1 + count;
-        for update in updates {
-            let key = usize_to_nat(update.key());
-            if key > self.format.max_key() {
-                return Err(StoreError::InvalidArgument);
-            }
-            if let Some(value) = update.value() {
-                let value_len = usize_to_nat(value.len());
-                if value_len > self.format.max_value_len() {
-                    return Err(StoreError::InvalidArgument);
-                }
-                word_capacity += self.format.bytes_to_words(value_len);
-            }
-            match sorted_keys.binary_search(&key) {
-                Ok(_) => return Err(StoreError::InvalidArgument),
-                Err(pos) => sorted_keys.insert(pos, key),
-            }
-        }
+        // Get the sorted keys. Fail if the transaction is invalid.
+        let sorted_keys = match self.format.transaction_valid(updates) {
+            None => return Err(StoreError::InvalidArgument),
+            Some(x) => x,
+        };
         // Reserve the capacity.
-        self.reserve(word_capacity)?;
+        self.reserve(self.format.transaction_capacity(updates))?;
         // Write the marker entry.
         let marker = self.tail()?;
         let entry = self.format.build_internal(InternalEntry::Marker { count });
@@ -341,7 +326,7 @@ impl<S: Storage> Store<S> {
         if self.capacity()?.remaining() < length {
             return Err(StoreError::NoCapacity);
         }
-        if self.immediate_capacity()? < length as isize {
+        if self.immediate_capacity()? < usize_to_nat(length) {
             self.compact()?;
         }
         Ok(())
@@ -640,7 +625,7 @@ impl<S: Storage> Store<S> {
         if self.capacity()?.remaining() < length as usize {
             return Err(StoreError::NoCapacity);
         }
-        while self.immediate_capacity()? < length as isize {
+        while self.immediate_capacity()? < length {
             self.compact()?;
         }
         Ok(())
@@ -855,16 +840,10 @@ impl<S: Storage> Store<S> {
     }
 
     /// Returns the number of words that can be written without compaction.
-    ///
-    /// This can be temporarily negative during compaction.
-    fn immediate_capacity(&self) -> StoreResult<isize> {
+    fn immediate_capacity(&self) -> StoreResult<Nat> {
         let tail = self.tail()?;
         let end = self.head()? + self.format.virt_size();
-        Ok(if tail > end {
-            -((tail - end) as isize)
-        } else {
-            (end - tail) as isize
-        })
+        Ok(end.get().saturating_sub(tail.get()))
     }
 
     /// Returns the position of the first word in the store.

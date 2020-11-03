@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use fuzz_store::stats::Stats;
-use fuzz_store::store::fuzz;
+use fuzz_store::{fuzz, Stats};
 use std::io::Write;
 use std::io::{stdout, Read};
 use std::path::Path;

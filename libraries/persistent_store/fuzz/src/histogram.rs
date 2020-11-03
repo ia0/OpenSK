@@ -12,30 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::num_bits;
 use std::collections::HashMap;
 
-/// Histogram with logarithmic buckets
+/// Histogram with logarithmic buckets.
 #[derive(Default)]
 pub struct Histogram {
+    /// Maps each bucket to its count.
+    ///
+    /// Buckets are numbers sharing the same highest bit. The first buckets are: only 0, only 1, 2
+    /// to 3, 4 to 7, 8 to 15. Buckets are identified by their lower-bound.
     buckets: HashMap<usize, usize>,
 }
 
 impl Histogram {
-    /// Increases the count of the bucket of `item`
+    /// Increases the count of the bucket of an item.
     ///
     /// The bucket of `item` is the highest power of two, lower or equal to `item`. If `item` is
     /// zero, then its bucket is also zero.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the item is too big, i.e. it uses its most significant bit.
     pub fn add(&mut self, item: usize) {
+        assert!(item <= usize::max_value() / 2);
         *self.buckets.entry(get_bucket(item)).or_insert(0) += 1;
     }
 
-    pub fn merge(&mut self, other: &Histogram) {
-        for (&bucket, &count) in &other.buckets {
-            *self.buckets.entry(bucket).or_insert(0) += count;
-        }
-    }
-
-    /// Returns one past the highest non-empty bucket
+    /// Returns one past the highest non-empty bucket.
     ///
     /// In other words, all non-empty buckets of the histogram are smaller than the returned bucket.
     pub fn bucket_lim(&self) -> usize {
@@ -45,30 +49,30 @@ impl Histogram {
         }
     }
 
+    /// Returns the count of a bucket.
     pub fn get(&self, bucket: usize) -> Option<usize> {
         self.buckets.get(&bucket).cloned()
     }
 
+    /// Returns the total count.
     pub fn count(&self) -> usize {
         self.buckets.values().sum()
     }
 }
 
+/// Returns the bucket of an item.
 fn get_bucket(item: usize) -> usize {
-    let width = 8 * std::mem::size_of::<usize>() - item.leading_zeros() as usize;
-    let bucket = bucket_from_width(width);
+    let bucket = bucket_from_width(num_bits(item));
     assert!(bucket <= item && (item == 0 || item / 2 < bucket));
     bucket
 }
 
-/// Converts a number of bits into a bucket
-///
-/// The number of bits should be the minimum number of bits necessary to represent the item.
+/// Returns the bucket of an item given its bit-width.
 pub fn bucket_from_width(width: usize) -> usize {
     if width == 0 {
         0
     } else {
-        1 << width - 1
+        1 << (width - 1)
     }
 }
 

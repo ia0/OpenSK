@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::stats::{StatKey, Stats, ALL_COUNTERS};
+use crate::stats::{StatKey, Stats};
 use crate::Entropy;
 use persistent_store::{
     BufferOptions, BufferStorage, Store, StoreDriver, StoreDriverOff, StoreDriverOn,
@@ -209,9 +209,14 @@ impl<'a> Fuzzer<'a> {
 
     fn init_counters(&mut self) {
         if self.stats.is_some() {
-            for &key in ALL_COUNTERS {
-                self.counters.insert(key, 0);
-            }
+            use StatKey::*;
+            self.counters.insert(PowerOnCount, 0);
+            self.counters.insert(TransactionCount, 0);
+            self.counters.insert(ClearCount, 0);
+            self.counters.insert(PrepareCount, 0);
+            self.counters.insert(InsertCount, 0);
+            self.counters.insert(RemoveCount, 0);
+            self.counters.insert(InterruptionCount, 0);
         }
     }
 
@@ -397,7 +402,7 @@ impl BitStack {
 
     fn pop(&mut self) -> Option<bool> {
         if self.len == 0 {
-            if self.data.len() == 0 {
+            if self.data.is_empty() {
                 return None;
             }
             self.len = 8;

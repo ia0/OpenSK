@@ -1,7 +1,7 @@
 [package]
 name = "fuzz-store"
 version = "0.0.0"
-authors = ["Automatically generated"]
+authors = ["Julien Cretin <cretin@google.com>"]
 publish = false
 edition = "2018"
 

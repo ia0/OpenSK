@@ -98,10 +98,10 @@ fn measure_stats(timer: &Timer, typ_: Type) -> Stats {
     store.remove(0).unwrap();
 
     // Measure the compaction time.
-    let mut old_lifetime = store.lifetime().unwrap().used;
+    let mut old_lifetime = store.lifetime().unwrap().used();
     let compaction = loop {
         let ((), time) = measure(timer, || store.insert(0, &[0; 4]).unwrap());
-        let new_lifetime = store.lifetime().unwrap().used;
+        let new_lifetime = store.lifetime().unwrap().used();
         if new_lifetime > old_lifetime + 2 {
             // We lost more lifetime than expected (there is at least the erase entry) which means a
             // compaction occurred.

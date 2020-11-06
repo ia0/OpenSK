@@ -15,6 +15,7 @@
 /// Number of keys that persist the CTAP reset command.
 pub const NUM_PERSISTENT_KEYS: usize = 20;
 
+/// Defines a key given its name and value or range of values.
 macro_rules! make_key {
     ($(#[$doc: meta])* $name: ident = $key: literal..$end: literal) => {
         $(#[$doc])* pub const $name: core::ops::Range<usize> = $key..$end;
@@ -24,6 +25,7 @@ macro_rules! make_key {
     };
 }
 
+/// Returns the range of values of a key given its value description.
 #[cfg(test)]
 macro_rules! make_range {
     ($key: literal..$end: literal) => {
@@ -34,6 +36,7 @@ macro_rules! make_range {
     };
 }
 
+/// Helper to define keys as a partial partition of a range.
 macro_rules! make_partition {
         ($range: expr,
          $(
@@ -51,12 +54,12 @@ macro_rules! make_partition {
     }
 
 make_partition! {
-    // We reserve key 0 and keys above 2048 for possible migration purposes. We add persistent
-    // entries starting from 1 and going up. We add non-persistent entries starting from 2047
-    // and going down. This way, we don't commit to a fixed number of persistent keys.
-    // Deprecated entries should not be deleted but prefixed with `_` to avoid accidentally
-    // reusing their keys.
+    // We reserve 0 and 2048+ for possible migration purposes. We add persistent entries starting
+    // from 1 and going up. We add non-persistent entries starting from 2047 and going down. This
+    // way, we don't commit to a fixed number of persistent keys.
     1..2048,
+
+    // WARNING: Keys should not be deleted but prefixed with `_` to avoid accidentally reusing them.
 
     /// The attestation private key.
     ATTESTATION_PRIVATE_KEY = 1;
@@ -79,10 +82,10 @@ make_partition! {
     /// board may configure `MAX_SUPPORTED_RESIDENTIAL_KEYS` depending on the storage size.
     CREDENTIALS = 1700..2000;
 
-    /// TODO
+    /// TODO: Help from reviewer needed for documentation.
     _MIN_PIN_LENGTH_RP_IDS = 2042;
 
-    /// TODO
+    /// The minimum PIN length.
     #[cfg(feature = "with_ctap2_1")]
     MIN_PIN_LENGTH = 2043;
 
@@ -98,7 +101,8 @@ make_partition! {
 
     /// The encryption and hmac keys.
     ///
-    /// This entry is always present. It is generated at startup if absent.
+    /// This entry is always present. It is generated at startup if absent. This is not a persistent
+    /// key because its value should change after a CTAP reset.
     MASTER_KEYS = 2046;
 
     /// The global signature counter.
@@ -121,10 +125,9 @@ mod test {
     fn keys_are_disjoint() {
         // Check that keys are in the range.
         for keys in ALL_KEYS {
-            assert!(KEY_RANGE.start <= keys.start);
-            assert!(keys.end <= KEY_RANGE.end);
+            assert!(KEY_RANGE.start <= keys.start && keys.end <= KEY_RANGE.end);
         }
-        // Check that keys are assigned at most once.
+        // Check that keys are assigned at most once, essentially partitioning the range.
         for key in KEY_RANGE {
             assert!(ALL_KEYS.iter().filter(|keys| keys.contains(&key)).count() <= 1);
         }

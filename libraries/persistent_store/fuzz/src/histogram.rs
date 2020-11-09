@@ -39,12 +39,20 @@ impl Histogram {
         *self.buckets.entry(get_bucket(item)).or_insert(0) += 1;
     }
 
+    /// Merges another histogram into this one.
+    pub fn merge(&mut self, other: &Histogram) {
+        for (&bucket, &count) in &other.buckets {
+            *self.buckets.entry(bucket).or_insert(0) += count;
+        }
+    }
+
     /// Returns one past the highest non-empty bucket.
     ///
     /// In other words, all non-empty buckets of the histogram are smaller than the returned bucket.
     pub fn bucket_lim(&self) -> usize {
         match self.buckets.keys().max() {
             None => 0,
+            Some(0) => 1,
             Some(x) => 2 * x,
         }
     }

@@ -16,7 +16,7 @@ mod histogram;
 mod stats;
 mod store;
 
-pub use stats::Stats;
+pub use stats::{StatKey, Stats};
 pub use store::fuzz;
 
 /// Bit-level entropy source based on a byte slice shared reference.

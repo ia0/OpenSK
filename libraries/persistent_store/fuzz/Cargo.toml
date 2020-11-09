@@ -16,6 +16,7 @@ git = "https://github.com/rust-fuzz/libfuzzer-sys.git"
 [dependencies]
 rand_core = "0.5"
 rand_pcg = "0.2"
+strum = { version = "0.19", features = ["derive"] }
 
 # Prevent this from interfering with workspaces
 [workspace]

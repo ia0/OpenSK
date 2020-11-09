@@ -47,7 +47,7 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
             if fuzzer.init.is_dirty() {
                 return;
             }
-            fuzzer.record(StatKey::ReachedLifetime, 0);
+            fuzzer.record(StatKey::FinishedLifetime, 0);
             break driver.power_on().unwrap().into_store();
         }
         driver = match driver {
@@ -60,7 +60,7 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
                     if fuzzer.init.is_dirty() {
                         return;
                     }
-                    fuzzer.record(StatKey::ReachedLifetime, 1);
+                    fuzzer.record(StatKey::FinishedLifetime, 1);
                     break store;
                 }
             },
@@ -70,8 +70,8 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
     let virt_window = (store.format().num_pages() * store.format().virt_page_size()) as usize;
     let init_lifetime = fuzzer.init.used_cycles() * virt_window;
     let lifetime = store.lifetime().unwrap().used() - init_lifetime;
-    fuzzer.record(StatKey::Lifetime, lifetime);
-    fuzzer.record(StatKey::Compaction, lifetime / virt_window);
+    fuzzer.record(StatKey::UsedLifetime, lifetime);
+    fuzzer.record(StatKey::NumCompactions, lifetime / virt_window);
     fuzzer.record_counters();
 }
 

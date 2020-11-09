@@ -12,16 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use fuzz_store::{fuzz, Stats};
+use fuzz_store::{fuzz, StatKey, Stats};
 use std::io::Write;
 use std::io::{stdout, Read};
 use std::path::Path;
 
 fn usage(program: &str) {
     println!(
-        r#"Usage: {} {{ [<artifact_file>] | <corpus_directory> }}
+        r#"Usage: {} {{ [<artifact_file>] | <corpus_directory> [<bucket_predicate>] }}
 
-If <artifact_file> is not provided, it is read from standard input."#,
+If <artifact_file> is not provided, it is read from standard input.
+
+When <bucket_predicate> is provided, only runs matching the predicate are shown. The format is
+<bucket_key>=<bucket_value>."#,
         program
     );
 }
@@ -31,13 +34,51 @@ fn debug(data: &[u8]) {
     fuzz(data, true, None);
 }
 
-fn analyze(corpus: &Path) {
+/// Bucket predicate.
+#[derive(Clone, Copy)]
+struct Predicate {
+    /// Bucket key.
+    key: StatKey,
+
+    /// Bucket value.
+    value: usize,
+}
+
+impl std::str::FromStr for Predicate {
+    type Err = String;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let predicate: Vec<&str> = input.split('=').collect();
+        if predicate.len() != 2 {
+            return Err("Predicate should have exactly one equal sign.".to_string());
+        }
+        let key = predicate[0]
+            .parse()
+            .map_err(|_| format!("Predicate key `{}` is not recognized.", predicate[0]))?;
+        let value: usize = predicate[1]
+            .parse()
+            .map_err(|_| format!("Predicate value `{}` is not a number.", predicate[1]))?;
+        if value != 0 && !value.is_power_of_two() {
+            return Err(format!(
+                "Predicate value `{}` is not a bucket.",
+                predicate[1]
+            ));
+        }
+        Ok(Predicate { key, value })
+    }
+}
+
+fn analyze(corpus: &Path, predicate: Option<Predicate>) {
     let mut stats = Stats::default();
     let mut count = 0;
     let total = std::fs::read_dir(corpus).unwrap().count();
     for entry in std::fs::read_dir(corpus).unwrap() {
         let data = std::fs::read(entry.unwrap().path()).unwrap();
-        fuzz(&data, false, Some(&mut stats));
+        let mut stat = Stats::default();
+        fuzz(&data, false, Some(&mut stat));
+        if predicate.map_or(true, |p| stat.has_count(p.key, p.value)) {
+            stats.merge(&stat);
+        }
         count += 1;
         print!("\u{1b}[K{} / {}\r", count, total);
         stdout().flush().unwrap();
@@ -47,21 +88,28 @@ fn analyze(corpus: &Path) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
+    // No arguments reads from stdin.
+    if args.len() <= 1 {
         let stdin = std::io::stdin();
         let mut data = Vec::new();
         stdin.lock().read_to_end(&mut data).unwrap();
         return debug(&data);
     }
-    if args.len() > 2 {
-        return usage(&args[0]);
-    }
     let path = Path::new(&args[1]);
-    if path.is_file() {
-        debug(&std::fs::read(path).unwrap());
-    } else if path.is_dir() {
-        analyze(path);
-    } else {
-        usage(&args[0]);
+    // File argument assumes artifact.
+    if path.is_file() && args.len() == 2 {
+        return debug(&std::fs::read(path).unwrap());
     }
+    // Single directory argument assumes corpus without filtering.
+    if path.is_dir() && args.len() == 2 {
+        return analyze(path, None);
+    }
+    // Directory argument with predicate assumes corpus with filtering.
+    if path.is_dir() && args.len() == 3 {
+        match args[2].parse() {
+            Ok(predicate) => return analyze(path, Some(predicate)),
+            Err(error) => eprintln!("Error: {}", error),
+        }
+    }
+    usage(&args[0]);
 }

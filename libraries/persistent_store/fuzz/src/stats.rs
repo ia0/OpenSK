@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use crate::histogram::{bucket_from_width, Histogram};
-
+use crate::num_bits;
 use std::collections::HashMap;
+use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-/// Statistics store for each fuzzing run.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+/// Statistics for each fuzzing run.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, EnumIter, EnumString, Display)]
 pub enum StatKey {
     /// The available entropy in bytes.
     Entropy,
@@ -47,16 +48,16 @@ pub enum StatKey {
     /// The number of words written during fuzzing.
     ///
     /// This permits to get an idea of how much lifetime was exercised during fuzzing.
-    Lifetime,
+    UsedLifetime,
 
     /// Whether the store reached the end of the lifetime during fuzzing.
-    ReachedLifetime,
+    FinishedLifetime,
 
     /// The number of times the store was fully compacted.
     ///
     /// The store is considered fully compacted when all pages have been compacted once. So each
     /// page has been compacted at least that number of times.
-    Compaction,
+    NumCompactions,
 
     /// The number of times the store was powered on.
     PowerOnCount,
@@ -80,50 +81,6 @@ pub enum StatKey {
     InterruptionCount,
 }
 
-/// All keys in print order.
-pub const ALL_KEYS: &[StatKey] = &[
-    StatKey::Entropy,
-    StatKey::PageSize,
-    StatKey::NumPages,
-    StatKey::MaxPageErases,
-    StatKey::DirtyLength,
-    StatKey::InitCycles,
-    StatKey::Lifetime,
-    StatKey::ReachedLifetime,
-    StatKey::Compaction,
-    StatKey::PowerOnCount,
-    StatKey::TransactionCount,
-    StatKey::ClearCount,
-    StatKey::PrepareCount,
-    StatKey::InsertCount,
-    StatKey::RemoveCount,
-    StatKey::InterruptionCount,
-];
-
-impl std::fmt::Display for StatKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        use StatKey::*;
-        match self {
-            Entropy => write!(f, "Entropy"),
-            PageSize => write!(f, "Page size"),
-            NumPages => write!(f, "Num page"),
-            MaxPageErases => write!(f, "Max erase cycle"),
-            DirtyLength => write!(f, "Dirty length"),
-            InitCycles => write!(f, "Initial cycles"),
-            Lifetime => write!(f, "Used lifetime"),
-            ReachedLifetime => write!(f, "Reached lifetime"),
-            Compaction => write!(f, "Num compaction"),
-            PowerOnCount => write!(f, "Num power on"),
-            TransactionCount => write!(f, "Num transaction"),
-            ClearCount => write!(f, "Num clear"),
-            PrepareCount => write!(f, "Num prepare"),
-            InsertCount => write!(f, "Num insert"),
-            RemoveCount => write!(f, "Num remove"),
-            InterruptionCount => write!(f, "Num interruption"),
-        }
-    }
-}
-
 /// Statistics about multiple fuzzing runs.
 #[derive(Default)]
 pub struct Stats {
@@ -135,6 +92,18 @@ impl Stats {
     /// Adds a measure for a statistics.
     pub fn add(&mut self, key: StatKey, value: usize) {
         self.stats.entry(key).or_default().add(value);
+    }
+
+    /// Merges another statistics into this one.
+    pub fn merge(&mut self, other: &Stats) {
+        for (&key, other) in &other.stats {
+            self.stats.entry(key).or_default().merge(other);
+        }
+    }
+
+    /// Returns the count of a bucket for a given key.
+    pub fn has_count(&self, key: StatKey, bucket: usize) -> bool {
+        self.stats.get(&key).and_then(|h| h.get(bucket)).is_some()
     }
 
     /// Returns one past the highest non-empty bucket.
@@ -156,7 +125,7 @@ impl std::fmt::Display for Stats {
         let mut header = Vec::new();
         header.push(String::new());
         let bucket_lim = self.bucket_lim();
-        let bits = bucket_lim.trailing_zeros() as usize;
+        let bits = num_bits(bucket_lim).saturating_sub(1);
         for width in 0..=bits {
             let bucket = bucket_from_width(width);
             header.push(format!(" {}", bucket));
@@ -164,7 +133,7 @@ impl std::fmt::Display for Stats {
         header.push(" count".into());
         matrix.push(header);
 
-        for &key in ALL_KEYS {
+        for key in StatKey::iter() {
             let mut row = Vec::new();
             row.push(format!("{}:", key));
             if let Some(h) = self.stats.get(&key) {

@@ -19,12 +19,12 @@ use std::path::Path;
 
 fn usage(program: &str) {
     println!(
-        r#"Usage: {} {{ [<artifact_file>] | <corpus_directory> [<bucket_predicate>] }}
+        r#"Usage: {} {{ [<artifact_file>] | <corpus_directory> <bucket_predicate>.. }}
 
 If <artifact_file> is not provided, it is read from standard input.
 
-When <bucket_predicate> is provided, only runs matching the predicate are shown. The format is
-<bucket_key>=<bucket_value>."#,
+When <bucket_predicate>.. are provided, only runs matching all predicates are shown. The format of
+each <bucket_predicate> is <bucket_key>=<bucket_value>."#,
         program
     );
 }
@@ -35,7 +35,6 @@ fn debug(data: &[u8]) {
 }
 
 /// Bucket predicate.
-#[derive(Clone, Copy)]
 struct Predicate {
     /// Bucket key.
     key: StatKey,
@@ -68,7 +67,7 @@ impl std::str::FromStr for Predicate {
     }
 }
 
-fn analyze(corpus: &Path, predicate: Option<Predicate>) {
+fn analyze(corpus: &Path, predicates: Vec<Predicate>) {
     let mut stats = Stats::default();
     let mut count = 0;
     let total = std::fs::read_dir(corpus).unwrap().count();
@@ -76,7 +75,7 @@ fn analyze(corpus: &Path, predicate: Option<Predicate>) {
         let data = std::fs::read(entry.unwrap().path()).unwrap();
         let mut stat = Stats::default();
         fuzz(&data, false, Some(&mut stat));
-        if predicate.map_or(true, |p| stat.has_count(p.key, p.value)) {
+        if predicates.iter().all(|p| stat.has_count(p.key, p.value)) {
             stats.merge(&stat);
         }
         count += 1;
@@ -100,14 +99,10 @@ fn main() {
     if path.is_file() && args.len() == 2 {
         return debug(&std::fs::read(path).unwrap());
     }
-    // Single directory argument assumes corpus without filtering.
-    if path.is_dir() && args.len() == 2 {
-        return analyze(path, None);
-    }
-    // Directory argument with predicate assumes corpus with filtering.
-    if path.is_dir() && args.len() == 3 {
-        match args[2].parse() {
-            Ok(predicate) => return analyze(path, Some(predicate)),
+    // Directory argument assumes corpus.
+    if path.is_dir() {
+        match args[2..].iter().map(|x| x.parse()).collect() {
+            Ok(predicates) => return analyze(path, predicates),
             Err(error) => eprintln!("Error: {}", error),
         }
     }

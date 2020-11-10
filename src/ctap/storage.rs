@@ -57,7 +57,7 @@ type Storage = crate::embedded_flash::SyscallStorage;
 const NUM_PAGES: usize = 20;
 const MAX_SUPPORTED_RESIDENTIAL_KEYS: usize = 150;
 
-const MAX_PIN_RETRIES: u8 = 6;
+const MAX_PIN_RETRIES: u8 = 8;
 const ATTESTATION_PRIVATE_KEY_LENGTH: usize = 32;
 const AAGUID_LENGTH: usize = 16;
 #[cfg(feature = "with_ctap2_1")]

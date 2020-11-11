@@ -501,7 +501,7 @@ where
             Some(attestation_private_key) => {
                 let attestation_private_key = array_ref![attestation_private_key, 0, 32];
                 let attestation_key =
-                    crypto::ecdsa::SecKey::from_bytes(attestation_private_key).unwrap();
+                    crypto::ecdsa::SecKey::from_bytes(&attestation_private_key).unwrap();
                 let attestation_certificate = self
                     .persistent_store
                     .attestation_certificate()?

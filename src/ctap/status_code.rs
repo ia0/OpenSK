@@ -84,13 +84,13 @@ pub enum Ctap2StatusCode {
     /// The persistent storage invariant is broken.
     ///
     /// There can be multiple reasons:
-    /// - The persistent storage has not be erased before its first usage.
+    /// - The persistent storage has not been erased before its first usage.
     /// - The persistent storage has been tempered by a third party.
-    /// - The flash is malfunctioning.
+    /// - The flash is malfunctioning (including the Tock driver).
     ///
-    /// In all cases the persistent storage should be completely erased. If the error reproduces, it
-    /// may indicate a software bug or a hardware deficiency. In both cases, the error should be
-    /// reported.
+    /// In the first 2 cases the persistent storage should be completely erased. If the error
+    /// reproduces, it may indicate a software bug or a hardware deficiency. In both cases, the
+    /// error should be reported.
     CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE = 0xF3,
 
     CTAP2_ERR_VENDOR_LAST = 0xFF,

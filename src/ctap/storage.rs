@@ -54,6 +54,9 @@ type Storage = crate::embedded_flash::SyscallStorage;
 // We have: I = (P * 4084 - 5107 - K * S) / 8 * C
 //
 // With P=20 and K=150, we have I=2M which is enough for 500 increments per day for 10 years.
+#[cfg(feature = "ram_storage")]
+const NUM_PAGES: usize = 3;
+#[cfg(not(feature = "ram_storage"))]
 const NUM_PAGES: usize = 20;
 const MAX_SUPPORTED_RESIDENTIAL_KEYS: usize = 150;
 
@@ -172,6 +175,9 @@ impl PersistentStore {
     ) -> Result<Option<PublicKeyCredentialSource>, Ctap2StatusCode> {
         let mut iter_result = Ok(());
         let iter = self.iter_credentials(&mut iter_result)?;
+        // TODO(reviewer): Should we return an error if we find more than one matching credential?
+        // We did not use to in the previous version (panic in debug mode, nothing in release mode)
+        // but I don't remember why. Let's document it.
         let result = iter.map(|(_, credential)| credential).find(|credential| {
             credential.rp_id == rp_id && credential.credential_id == credential_id
         });
@@ -283,19 +289,11 @@ impl PersistentStore {
 
     /// Increments the global signature counter.
     pub fn incr_global_signature_counter(&mut self) -> Result<(), Ctap2StatusCode> {
-        let mut buffer = [0; core::mem::size_of::<u32>()];
-        match self.store.find(key::GLOBAL_SIGNATURE_COUNTER)? {
-            None => {
-                buffer.copy_from_slice(&1u32.to_ne_bytes());
-                self.store.insert(key::GLOBAL_SIGNATURE_COUNTER, &buffer)?;
-            }
-            Some(value) => {
-                let value = u32::from_ne_bytes(*array_ref!(&value, 0, 4));
-                // In hopes that servers handle the wrapping gracefully.
-                buffer.copy_from_slice(&value.wrapping_add(1).to_ne_bytes());
-                self.store.insert(key::GLOBAL_SIGNATURE_COUNTER, &buffer)?;
-            }
-        }
+        let old_value = self.global_signature_counter()?;
+        // In hopes that servers handle the wrapping gracefully.
+        let new_value = old_value.wrapping_add(1);
+        self.store
+            .insert(key::GLOBAL_SIGNATURE_COUNTER, &new_value.to_ne_bytes())?;
         Ok(())
     }
 
@@ -334,6 +332,30 @@ impl PersistentStore {
         pin_hash: &[u8; PIN_AUTH_LENGTH],
     ) -> Result<(), Ctap2StatusCode> {
         Ok(self.store.insert(key::PIN_HASH, pin_hash)?)
+    }
+
+    /// Returns the number of remaining PIN retries.
+    pub fn pin_retries(&self) -> Result<u8, Ctap2StatusCode> {
+        match self.store.find(key::PIN_RETRIES)? {
+            None => Ok(MAX_PIN_RETRIES),
+            Some(value) if value.len() == 1 => Ok(value[0]),
+            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+        }
+    }
+
+    /// Decrements the number of remaining PIN retries.
+    pub fn decr_pin_retries(&mut self) -> Result<(), Ctap2StatusCode> {
+        let old_value = self.pin_retries()?;
+        let new_value = old_value.saturating_sub(1);
+        if new_value != old_value {
+            self.store.insert(key::PIN_RETRIES, &[new_value])?;
+        }
+        Ok(())
+    }
+
+    /// Resets the number of remaining PIN retries.
+    pub fn reset_pin_retries(&mut self) -> Result<(), Ctap2StatusCode> {
+        Ok(self.store.remove(key::PIN_RETRIES)?)
     }
 
     /// Returns the minimum PIN length.
@@ -386,39 +408,17 @@ impl PersistentStore {
         )?)
     }
 
-    /// Returns the number of remaining PIN retries.
-    pub fn pin_retries(&self) -> Result<u8, Ctap2StatusCode> {
-        match self.store.find(key::PIN_RETRIES)? {
-            None => Ok(MAX_PIN_RETRIES),
-            Some(value) if value.len() == 1 => Ok(value[0]),
-            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
-        }
-    }
-
-    /// Decrements the number of remaining PIN retries.
-    pub fn decr_pin_retries(&mut self) -> Result<(), Ctap2StatusCode> {
-        let old_value = self.pin_retries()?;
-        let new_value = old_value.saturating_sub(1);
-        if new_value != old_value {
-            self.store.insert(key::PIN_RETRIES, &[new_value])?;
-        }
-        Ok(())
-    }
-
-    /// Resets the number of remaining PIN retries.
-    pub fn reset_pin_retries(&mut self) -> Result<(), Ctap2StatusCode> {
-        Ok(self.store.remove(key::PIN_RETRIES)?)
-    }
-
     /// Returns the attestation private key if defined.
-    pub fn attestation_private_key(&self) -> Result<Option<Vec<u8>>, Ctap2StatusCode> {
-        let attestation_private_key = self.store.find(key::ATTESTATION_PRIVATE_KEY)?;
-        if let Some(attestation_private_key) = &attestation_private_key {
-            if attestation_private_key.len() != ATTESTATION_PRIVATE_KEY_LENGTH {
-                return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+    pub fn attestation_private_key(
+        &self,
+    ) -> Result<Option<[u8; ATTESTATION_PRIVATE_KEY_LENGTH]>, Ctap2StatusCode> {
+        match self.store.find(key::ATTESTATION_PRIVATE_KEY)? {
+            None => Ok(None),
+            Some(key) if key.len() != ATTESTATION_PRIVATE_KEY_LENGTH => {
+                Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE)
             }
+            Some(key) => Ok(Some(*array_ref![key, 0, ATTESTATION_PRIVATE_KEY_LENGTH])),
         }
-        Ok(attestation_private_key)
     }
 
     /// Sets the attestation private key.
@@ -928,7 +928,7 @@ mod test {
         // The persistent keys stay initialized and preserve their value after a reset.
         persistent_store.reset(&mut rng).unwrap();
         assert_eq!(
-            persistent_store.attestation_private_key().unwrap().unwrap(),
+            &persistent_store.attestation_private_key().unwrap().unwrap(),
             key_material::ATTESTATION_PRIVATE_KEY
         );
         assert_eq!(

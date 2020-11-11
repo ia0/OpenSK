@@ -48,7 +48,7 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
                 return;
             }
             fuzzer.record(StatKey::FinishedLifetime, 0);
-            break driver.power_on().unwrap().into_store();
+            break driver.power_on().unwrap().extract_store();
         }
         driver = match driver {
             StoreDriver::On(driver) => match fuzzer.apply(driver) {
@@ -175,7 +175,7 @@ impl<'a> Fuzzer<'a> {
                 Err(store)
             }
             Err((store, StoreInvariant::NoLifetime)) => Err(store),
-            Err((store, error)) => self.crash((store.into_storage(), error)),
+            Err((store, error)) => self.crash((store.extract_storage(), error)),
             Ok((error, driver)) => {
                 if self.debug {
                     if let Some(error) = error {

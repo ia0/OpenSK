@@ -293,6 +293,9 @@ impl<'a> Fuzzer<'a> {
         value
     }
 
+    // TODO(ia0): We use too much CPU to compute the delay map. We should be able to just count the
+    // number of storage operations by checking the remaining delay. We can then use the entropy
+    // directly from the corruption function because it's called at most once.
     fn interruption(
         &mut self,
         delay_map: Result<Vec<usize>, (usize, BufferStorage)>,

@@ -16,6 +16,9 @@ use crate::num_bits;
 use std::collections::HashMap;
 
 /// Histogram with logarithmic buckets.
+///
+/// This is used to compute coverage statistics of the fuzzing runs of a corpus. This is not used
+/// during actual fuzzing, only when replaying a corpus to compute statistics.
 #[derive(Default)]
 pub struct Histogram {
     /// Maps each bucket to its count.

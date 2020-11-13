@@ -82,6 +82,9 @@ fn analyze(corpus: &Path, predicates: Vec<Predicate>) {
         print!("\u{1b}[K{} / {}\r", count, total);
         stdout().flush().unwrap();
     }
+    // NOTE: To avoid reloading the corpus each time we want to check a different filter, we can
+    // start an interactive loop here taking filters as input and printing the filtered stats. We
+    // would keep all individual stats for each run in a vector.
     print!("{}", stats);
 }
 

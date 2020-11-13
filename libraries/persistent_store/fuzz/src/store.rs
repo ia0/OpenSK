@@ -23,6 +23,10 @@ use rand_pcg::Pcg32;
 use std::collections::HashMap;
 use std::convert::TryInto;
 
+/// Checks the store against a sequence of manipulations.
+///
+/// The entropy to generate the sequence of manipulation should be provided in `data`. Debugging
+/// information is printed if `debug` is set. Statistics are gathered if `stats` is set.
 pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
     let mut fuzzer = Fuzzer::new(data, debug, stats);
     fuzzer.init_counters();
@@ -75,16 +79,35 @@ pub fn fuzz(data: &[u8], debug: bool, stats: Option<&mut Stats>) {
     fuzzer.record_counters();
 }
 
+/// Fuzzing state.
 struct Fuzzer<'a> {
+    /// Remaining fuzzing entropy.
     entropy: Entropy<'a>,
+
+    /// Unlimited pseudo entropy.
+    ///
+    /// This source is only used to generate the values of entries. This is a compromise to avoid
+    /// consuming fuzzing entropy for low additional coverage.
     values: Pcg32,
+
+    /// The fuzzing mode.
     init: Init,
+
+    /// Whether debugging is enabled.
     debug: bool,
+
+    /// Whether statistics should be gathered.
     stats: Option<&'a mut Stats>,
+
+    /// Statistics counters (only used when gathering statistics).
+    ///
+    /// The counters are written to the statistics at the end of the fuzzing run, when their value
+    /// is final.
     counters: HashMap<StatKey, usize>,
 }
 
 impl<'a> Fuzzer<'a> {
+    /// Creates an initial fuzzing state.
     fn new(data: &'a [u8], debug: bool, stats: Option<&'a mut Stats>) -> Fuzzer<'a> {
         let mut entropy = Entropy::new(data);
         let seed = entropy.read_slice(16);
@@ -99,6 +122,7 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Initializes the fuzzing state and returns the store driver.
     fn init(&mut self) -> StoreDriver {
         let mut options = BufferOptions {
             word_size: 4,
@@ -147,6 +171,7 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Powers a driver with possible interruption.
     fn power_on(&mut self, driver: StoreDriverOff) -> StoreDriver {
         if self.debug {
             println!("Power on the store.");
@@ -163,6 +188,7 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Generates and applies an operation with possible interruption.
     fn apply(&mut self, driver: StoreDriverOn) -> Result<StoreDriver, Store<BufferStorage>> {
         let operation = self.operation(&driver);
         if self.debug {
@@ -187,6 +213,7 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Reports a broken invariant and terminates fuzzing.
     fn crash(&self, error: (BufferStorage, StoreInvariant)) -> ! {
         let (storage, invariant) = error;
         if self.debug {
@@ -195,18 +222,21 @@ impl<'a> Fuzzer<'a> {
         panic!("{:?}", invariant);
     }
 
+    /// Records a statistics if enabled.
     fn record(&mut self, key: StatKey, value: usize) {
         if let Some(stats) = &mut self.stats {
             stats.add(key, value);
         }
     }
 
+    /// Increments a counter if statistics are enabled.
     fn increment(&mut self, key: StatKey) {
         if self.stats.is_some() {
             *self.counters.get_mut(&key).unwrap() += 1;
         }
     }
 
+    /// Initializes all counters if statistics are enabled.
     fn init_counters(&mut self) {
         if self.stats.is_some() {
             use StatKey::*;
@@ -220,6 +250,7 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Records all counters if statistics are enabled.
     fn record_counters(&mut self) {
         if let Some(stats) = &mut self.stats {
             for (&key, &value) in self.counters.iter() {
@@ -228,6 +259,7 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Generates a possibly invalid operation.
     fn operation(&mut self, driver: &StoreDriverOn) -> StoreOperation {
         let format = driver.model().format();
         match self.entropy.read_range(0, 2) {
@@ -263,6 +295,7 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Generates a possibly invalid update.
     fn update(&mut self) -> StoreUpdate {
         match self.entropy.read_range(0, 1) {
             0 => {
@@ -280,11 +313,13 @@ impl<'a> Fuzzer<'a> {
         }
     }
 
+    /// Generates a possibly invalid key.
     fn key(&mut self) -> usize {
         // Use 4096 as the canonical invalid key.
         self.entropy.read_range(0, 4096)
     }
 
+    /// Generates a possibly invalid value.
     fn value(&mut self) -> Vec<u8> {
         // Use 1024 as the canonical invalid length.
         let length = self.entropy.read_range(0, 1024);
@@ -293,6 +328,10 @@ impl<'a> Fuzzer<'a> {
         value
     }
 
+    /// Generates an interruption.
+    ///
+    /// The `delay_map` describes the number of modified bits by the upcoming sequence of store
+    /// operations.
     // TODO(ia0): We use too much CPU to compute the delay map. We should be able to just count the
     // number of storage operations by checking the remaining delay. We can then use the entropy
     // directly from the corruption function because it's called at most once.
@@ -349,13 +388,29 @@ impl<'a> Fuzzer<'a> {
     }
 }
 
+/// The initial fuzzing mode.
 enum Init {
+    /// Fuzzing starts from a clean storage.
+    ///
+    /// All invariant are checked.
     Clean,
+
+    /// Fuzzing starts from a dirty storage.
+    ///
+    /// Only crashing is checked.
     Dirty,
-    Used { cycle: usize },
+
+    /// Fuzzing starts from a simulated old storage.
+    ///
+    /// All invariant are checked.
+    Used {
+        /// Number of simulated used cycles.
+        cycle: usize,
+    },
 }
 
 impl Init {
+    /// Returns whether fuzzing is in dirty mode.
     fn is_dirty(&self) -> bool {
         match self {
             Init::Dirty => true,
@@ -363,6 +418,9 @@ impl Init {
         }
     }
 
+    /// Returns the number of used cycles.
+    ///
+    /// This is zero if the storage was not artificially aged.
     fn used_cycles(&self) -> usize {
         match self {
             Init::Used { cycle } => *cycle,
@@ -371,17 +429,24 @@ impl Init {
     }
 }
 
+/// Compact stack of bits.
+// NOTE: This would probably go away once the delay map is simplified.
 #[derive(Default, Clone, Debug)]
 struct BitStack {
+    /// Bits stored in little-endian (for bytes and bits).
     data: Vec<u8>,
+
+    /// Number of bits stored.
     len: usize,
 }
 
 impl BitStack {
+    /// Returns whether the stack is empty.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Returns the length of the stack.
     fn len(&self) -> usize {
         if self.len == 0 {
             8 * self.data.len()
@@ -390,6 +455,7 @@ impl BitStack {
         }
     }
 
+    /// Pushes a bit to the stack.
     fn push(&mut self, value: bool) {
         if self.len == 0 {
             self.data.push(0);
@@ -403,6 +469,7 @@ impl BitStack {
         }
     }
 
+    /// Pops a bit from the stack.
     fn pop(&mut self) -> Option<bool> {
         if self.len == 0 {
             if self.data.is_empty() {

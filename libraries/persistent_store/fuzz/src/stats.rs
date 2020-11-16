@@ -102,8 +102,8 @@ impl Stats {
     }
 
     /// Returns the count of a bucket for a given key.
-    pub fn has_count(&self, key: StatKey, bucket: usize) -> bool {
-        self.stats.get(&key).and_then(|h| h.get(bucket)).is_some()
+    pub fn get_count(&self, key: StatKey, bucket: usize) -> Option<usize> {
+        self.stats.get(&key).and_then(|h| h.get(bucket))
     }
 
     /// Returns one past the highest non-empty bucket.
@@ -125,8 +125,8 @@ impl std::fmt::Display for Stats {
         let mut header = Vec::new();
         header.push(String::new());
         let bucket_lim = self.bucket_lim();
-        let bits = num_bits(bucket_lim).saturating_sub(1);
-        for width in 0..=bits {
+        let bits = num_bits(bucket_lim);
+        for width in 0..bits {
             let bucket = bucket_from_width(width);
             header.push(format!(" {}", bucket));
         }
@@ -136,16 +136,17 @@ impl std::fmt::Display for Stats {
         for key in StatKey::iter() {
             let mut row = Vec::new();
             row.push(format!("{}:", key));
-            if let Some(h) = self.stats.get(&key) {
-                for width in 0..=bits {
-                    let bucket = bucket_from_width(width);
-                    row.push(match h.get(bucket) {
-                        None => String::new(),
-                        Some(x) => format!(" {}", x),
-                    });
-                }
-                row.push(format!(" {}", h.count()));
+            for width in 0..bits {
+                let bucket = bucket_from_width(width);
+                row.push(match self.get_count(key, bucket) {
+                    None => String::new(),
+                    Some(x) => format!(" {}", x),
+                });
             }
+            row.push(format!(
+                " {}",
+                self.stats.get(&key).map_or(0, |h| h.count())
+            ));
             matrix.push(row);
         }
 

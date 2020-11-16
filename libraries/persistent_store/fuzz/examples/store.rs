@@ -75,7 +75,10 @@ fn analyze(corpus: &Path, predicates: Vec<Predicate>) {
         let data = std::fs::read(entry.unwrap().path()).unwrap();
         let mut stat = Stats::default();
         fuzz(&data, false, Some(&mut stat));
-        if predicates.iter().all(|p| stat.has_count(p.key, p.value)) {
+        if predicates
+            .iter()
+            .all(|p| stat.get_count(p.key, p.value).is_some())
+        {
             stats.merge(&stat);
         }
         count += 1;

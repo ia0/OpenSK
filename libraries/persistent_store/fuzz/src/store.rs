@@ -23,6 +23,9 @@ use rand_pcg::Pcg32;
 use std::collections::HashMap;
 use std::convert::TryInto;
 
+// NOTE: We should be able to improve coverage by only checking the last operation. Because
+// operations before the last could be checked with a shorter entropy.
+
 /// Checks the store against a sequence of manipulations.
 ///
 /// The entropy to generate the sequence of manipulation should be provided in `data`. Debugging

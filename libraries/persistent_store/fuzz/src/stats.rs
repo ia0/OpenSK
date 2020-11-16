@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Helpers to compute and display fuzzing coverage statistics.
+//!
+//! This is not used during actual fuzzing, only when replaying a corpus to compute statistics.
+
 use crate::histogram::{bucket_from_width, Histogram};
 use crate::num_bits;
 use std::collections::HashMap;

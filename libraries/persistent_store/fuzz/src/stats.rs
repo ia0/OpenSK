@@ -130,8 +130,7 @@ impl std::fmt::Display for Stats {
         let mut header = Vec::new();
         header.push(String::new());
         for width in 0..bits {
-            let bucket = bucket_from_width(width);
-            header.push(format!(" {}", bucket));
+            header.push(format!(" {}", bucket_from_width(width)));
         }
         header.push(" count".into());
         matrix.push(header);
@@ -140,16 +139,13 @@ impl std::fmt::Display for Stats {
             let mut row = Vec::new();
             row.push(format!("{}:", key));
             for width in 0..bits {
-                let bucket = bucket_from_width(width);
-                row.push(match self.get_count(key, bucket) {
+                row.push(match self.get_count(key, bucket_from_width(width)) {
                     None => String::new(),
                     Some(x) => format!(" {}", x),
                 });
             }
-            row.push(format!(
-                " {}",
-                self.stats.get(&key).map_or(0, |h| h.count())
-            ));
+            let count = self.stats.get(&key).map_or(0, |h| h.count());
+            row.push(format!(" {}", count));
             matrix.push(row);
         }
 

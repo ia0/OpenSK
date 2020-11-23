@@ -124,7 +124,7 @@ impl PersistentStore {
             page_size: PAGE_SIZE,
             max_word_writes: 2,
             max_page_erases: 10000,
-            strict_write: true,
+            strict_mode: true,
         };
         Storage::new(store, options)
     }

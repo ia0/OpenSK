@@ -26,6 +26,9 @@ use std::convert::TryInto;
 // NOTE: We should be able to improve coverage by only checking the last operation. Because
 // operations before the last could be checked with a shorter entropy.
 
+// NOTE: Maybe we should split the fuzz target in smaller parts (like one per init). We should also
+// name the fuzz targets with action names.
+
 /// Checks the store against a sequence of manipulations.
 ///
 /// The entropy to generate the sequence of manipulation should be provided in `data`. Debugging

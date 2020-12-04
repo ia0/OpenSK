@@ -182,6 +182,9 @@ pub struct Store<S: Storage> {
 
     /// The storage configuration.
     format: Format,
+
+    /// The position of the first word in the store.
+    head: Option<Position>,
 }
 
 impl<S: Storage> Store<S> {
@@ -199,7 +202,11 @@ impl<S: Storage> Store<S> {
             None => return Err((StoreError::InvalidArgument, storage)),
             Some(x) => x,
         };
-        let mut store = Store { storage, format };
+        let mut store = Store {
+            storage,
+            format,
+            head: None,
+        };
         if let Err(error) = store.recover() {
             return Err((error, store.storage));
         }
@@ -460,7 +467,9 @@ impl<S: Storage> Store<S> {
 
     /// Recovers a possible compaction interrupted while copying the entries.
     fn recover_compaction(&mut self) -> StoreResult<()> {
-        let head_page = self.head()?.page(&self.format);
+        let head = self.get_extremum_page_head(Ordering::Less)?;
+        self.head = Some(head);
+        let head_page = head.page(&self.format);
         match self.parse_compact(head_page)? {
             WordState::Erased => Ok(()),
             WordState::Partial => self.compact(),
@@ -688,14 +697,25 @@ impl<S: Storage> Store<S> {
 
     /// Continues a compaction after its erase entry has been written.
     fn compact_erase(&mut self, erase: Position) -> StoreResult<()> {
-        let page = match self.parse_entry(&mut erase.clone())? {
+        // Read the page to erase from the erase entry.
+        let mut page = match self.parse_entry(&mut erase.clone())? {
             ParsedEntry::Internal(InternalEntry::Erase { page }) => page,
             _ => return Err(StoreError::InvalidStorage),
         };
+        // Erase the page.
         self.storage_erase_page(page)?;
-        let head = self.head()?;
+        // Update the head.
+        page = (page + 1) % self.format.num_pages();
+        let init = match self.parse_init(page)? {
+            WordState::Valid(x) => x,
+            _ => return Err(StoreError::InvalidStorage),
+        };
+        let head = self.format.page_head(init, page);
+        self.head = Some(head);
+        // Wipe the overlapping entry from the erased page.
         let pos = head.page_begin(&self.format);
         self.wipe_span(pos, head - pos)?;
+        // Mark the erase entry as done.
         self.set_padding(erase)?;
         Ok(())
     }
@@ -848,7 +868,7 @@ impl<S: Storage> Store<S> {
 
     /// Returns the position of the first word in the store.
     pub(crate) fn head(&self) -> StoreResult<Position> {
-        self.get_extremum_page_head(Ordering::Less)
+        self.head.ok_or(StoreError::InvalidStorage)
     }
 
     /// Returns one past the position of the last word in the store.

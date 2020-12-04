@@ -24,10 +24,6 @@ use libtock_drivers::console::Console;
 use libtock_drivers::timer::{self, Duration, Timer, Timestamp};
 use persistent_store::{Storage, Store};
 
-const NUM_PAGES: usize = 3;
-// This page size is for Nordic. It must be modified for other boards.
-const PAGE_SIZE: usize = 0x1000;
-
 fn timestamp(timer: &Timer) -> Timestamp<f64> {
     Timestamp::<f64>::from_clock_value(timer.get_current_clock().ok().unwrap())
 }
@@ -40,8 +36,8 @@ fn measure<T>(timer: &Timer, operation: impl FnOnce() -> T) -> (T, Duration<f64>
 }
 
 // Only use one store at a time.
-unsafe fn boot_store(erase: bool) -> Store<SyscallStorage> {
-    let mut storage = SyscallStorage::new(NUM_PAGES).unwrap();
+unsafe fn boot_store(num_pages: usize, erase: bool) -> Store<SyscallStorage> {
+    let mut storage = SyscallStorage::new(num_pages).unwrap();
     if erase {
         for page in 0..storage.num_pages() {
             storage.erase_page(page).unwrap();
@@ -50,107 +46,81 @@ unsafe fn boot_store(erase: bool) -> Store<SyscallStorage> {
     Store::new(storage).ok().unwrap()
 }
 
-#[derive(Copy, Clone, Debug)]
-enum Type {
-    Credential,
-    Counter,
-}
+fn compute_latency(timer: &Timer, num_pages: usize, key_increment: usize, word_length: usize) {
+    let mut console = Console::new();
+    writeln!(
+        console,
+        "\nLatency for num_pages={} key_increment={} word_length={}.",
+        num_pages, key_increment, word_length
+    )
+    .unwrap();
 
-impl Type {
-    fn expected_length(self) -> usize {
-        match self {
-            Type::Credential => 50,
-            Type::Counter => 1,
-        }
-    }
+    let mut store = unsafe { boot_store(num_pages, true) };
+    let total_capacity = store.capacity().unwrap().total();
 
-    fn key_increment(self) -> usize {
-        match self {
-            Type::Credential => 1,
-            Type::Counter => 0,
-        }
-    }
-}
-
-struct Stats {
-    compaction: Duration<f64>,
-    reboot: Duration<f64>,
-}
-
-fn measure_stats(timer: &Timer, typ_: Type) -> Stats {
-    let mut store = unsafe { boot_store(true) };
-
-    // Fill the store.
-    store.insert(0, &[0; 4]).unwrap();
-    let mut key = 1;
-    let mut capacity = store.capacity().unwrap().remaining() - 2;
-    while capacity > 1 {
-        let length = core::cmp::min(capacity - 1, typ_.expected_length());
-        store.insert(key, &vec![0; length * 4]).unwrap();
-        key += typ_.key_increment();
-        capacity -= 1 + length;
-    }
-
-    // Measure the reboot time.
-    let (mut store, reboot) = measure(&timer, || unsafe { boot_store(false) });
-
-    // Remove the first element. We will reinsert it to trigger exactly one compaction.
+    // Burn N words to align the end of the user capacity with the virtual capacity.
+    store.insert(0, &vec![0; 4 * (num_pages - 1)]).unwrap();
     store.remove(0).unwrap();
 
-    // Measure the compaction time.
-    let mut old_lifetime = store.lifetime().unwrap().used();
-    let compaction = loop {
-        let ((), time) = measure(timer, || store.insert(0, &[0; 4]).unwrap());
-        let new_lifetime = store.lifetime().unwrap().used();
-        if new_lifetime > old_lifetime + 2 {
-            // We lost more lifetime than expected (there is at least the erase entry) which means a
-            // compaction occurred.
-            break time;
+    // Insert entries until there is space for one more.
+    let count = total_capacity / (1 + word_length) - 1;
+    let ((), time) = measure(timer, || {
+        for i in 0..count {
+            let key = 1 + key_increment * i;
+            // For some reason the kernel sometimes fails.
+            while store.insert(key, &vec![0; 4 * word_length]).is_err() {
+                // We never enter this loop in practice, but we still need it for the kernel.
+                writeln!(console, "Retry insert.").unwrap();
+            }
         }
-        old_lifetime = new_lifetime;
-    };
+    });
+    writeln!(console, "Setup: {:.1}ms for {} entries.", time.ms(), count).unwrap();
 
-    Stats { compaction, reboot }
+    // Measure latency of insert.
+    let key = 1 + key_increment * count;
+    let ((), time) = measure(&timer, || {
+        store.insert(key, &vec![0; 4 * word_length]).unwrap()
+    });
+    writeln!(console, "Insert: {:.1}ms.", time.ms()).unwrap();
+
+    // Measure latency of boot.
+    let (mut store, time) = measure(&timer, || unsafe { boot_store(num_pages, false) });
+    writeln!(console, "Boot: {:.1}ms.", time.ms()).unwrap();
+
+    // Measure latency of remove.
+    let ((), time) = measure(&timer, || store.remove(key).unwrap());
+    writeln!(console, "Remove: {:.1}ms.", time.ms()).unwrap();
+
+    // Measure latency of compaction.
+    let length = total_capacity + num_pages - store.lifetime().unwrap().used();
+    if length > 0 {
+        // Fill the store such that compaction is needed for one word.
+        store.insert(0, &vec![0; 4 * (length - 1)]).unwrap();
+        store.remove(0).unwrap();
+    }
+    let ((), time) = measure(timer, || store.prepare(1).unwrap());
+    writeln!(console, "Compaction: {:.1}ms.", time.ms()).unwrap();
 }
 
 fn main() {
-    let mut console = Console::new();
     let mut with_callback = timer::with_callback(|_, _| {});
     let timer = with_callback.init().ok().unwrap();
 
-    write!(console, "Computing... ").unwrap();
-    let counter = measure_stats(&timer, Type::Counter);
-    let credential = measure_stats(&timer, Type::Credential);
-    writeln!(console, "done.").unwrap();
-    writeln!(
-        console,
-        "Compaction is about [{:.1} - {:.1}] ms.",
-        counter.compaction.ms(),
-        credential.compaction.ms()
-    )
-    .unwrap();
-    writeln!(console, "Operations are about:").unwrap();
-    // This is approximative but good enough.
-    let m = unsafe { boot_store(false).max_value_length() } as f64 / PAGE_SIZE as f64;
-    for n in 3..=20 {
-        let ratio = (n as f64 - (1. + m)) / (2. - m);
-        let min_reboot = credential.reboot.ms() * ratio;
-        let max_reboot = counter.reboot.ms() * ratio;
-        writeln!(
-            console,
-            "- [{:.1} - {:.1}] ms for {} pages.",
-            min_reboot, max_reboot, n
-        )
-        .unwrap();
-    }
-    writeln!(
-        console,
-        "The best case is when the store has many credentials."
-    )
-    .unwrap();
-    writeln!(
-        console,
-        "The worst case is when the store has few credentials."
-    )
-    .unwrap();
+    writeln!(Console::new(), "\nRunning 4 tests...").unwrap();
+    // Those non-overwritten 50 words entries simulate credentials.
+    compute_latency(&timer, 3, 1, 50);
+    compute_latency(&timer, 20, 1, 50);
+    // Those overwritten 1 word entries simulate counters.
+    compute_latency(&timer, 3, 0, 1);
+    compute_latency(&timer, 20, 0, 1);
+    writeln!(Console::new(), "\nDone.").unwrap();
+
+    // Results on nrf52840dk:
+    //
+    // | Pages | Overwrite | Length    | Boot     | Compaction | Insert  | Remove |
+    // | ----- | --------- | --------- | -------  | ---------- | ------  | ------ |
+    // | 3     | no        | 50 words  | 2.0 ms   | 132.8 ms   | 4.3 ms  | 1.2 ms |
+    // | 20    | no        | 50 words  | 7.8 ms   | 135.7 ms   | 9.9 ms  | 4.0 ms |
+    // | 3     | yes       | 1 word    | 19.6 ms  | 90.8 ms    | 4.7 ms  | 2.3 ms |
+    // | 20    | yes       | 1 word    | 183.3 ms | 90.9 ms    | 4.8 ms  | 2.3 ms |
 }

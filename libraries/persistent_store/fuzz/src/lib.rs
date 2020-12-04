@@ -81,6 +81,11 @@ impl Entropy<'_> {
         self.bit == 8 * self.data.len()
     }
 
+    // TODO: Use this function.
+    // fn align_byte(&mut self) {
+    //     self.bit += (8 * self.data.len() - self.bit) % 8;
+    // }
+
     /// Reads a bit.
     fn read_bit(&mut self) -> bool {
         if self.is_empty() {

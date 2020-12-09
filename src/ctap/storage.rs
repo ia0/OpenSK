@@ -23,7 +23,6 @@ use crate::ctap::status_code::Ctap2StatusCode;
 use crate::ctap::INITIAL_SIGNATURE_COUNTER;
 #[cfg(feature = "with_ctap2_1")]
 use alloc::string::String;
-#[cfg(any(test, feature = "ram_storage", feature = "with_ctap2_1"))]
 use alloc::vec;
 use alloc::vec::Vec;
 use arrayref::array_ref;
@@ -206,32 +205,41 @@ impl PersistentStore {
     ) -> Result<(), Ctap2StatusCode> {
         // Holds the key of the existing credential if this is an update.
         let mut old_key = None;
-        // Holds the unordered list of used keys.
-        let mut keys = Vec::new();
+        let min_key = key::CREDENTIALS.start;
+        // Holds whether a key is used (indices are shifted by min_key).
+        let mut keys = vec![false; MAX_SUPPORTED_RESIDENTIAL_KEYS];
         let mut iter_result = Ok(());
         let iter = self.iter_credentials(&mut iter_result)?;
         for (key, credential) in iter {
-            keys.push(key);
+            if key < min_key
+                || key - min_key >= MAX_SUPPORTED_RESIDENTIAL_KEYS
+                || keys[key - min_key]
+            {
+                return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
+            }
+            keys[key - min_key] = true;
             if credential.rp_id == new_credential.rp_id
                 && credential.user_handle == new_credential.user_handle
             {
                 if old_key.is_some() {
-                    return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+                    return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
                 }
                 old_key = Some(key);
             }
         }
         iter_result?;
-        if old_key.is_none() && keys.len() >= MAX_SUPPORTED_RESIDENTIAL_KEYS {
+        if old_key.is_none()
+            && keys.iter().filter(|&&x| x).count() >= MAX_SUPPORTED_RESIDENTIAL_KEYS
+        {
             return Err(Ctap2StatusCode::CTAP2_ERR_KEY_STORE_FULL);
         }
         let key = match old_key {
             // This is a new credential being added, we need to allocate a free key. We choose the
-            // first available key. This is quadratic in the number of existing keys.
+            // first available key.
             None => key::CREDENTIALS
                 .take(MAX_SUPPORTED_RESIDENTIAL_KEYS)
-                .find(|key| !keys.contains(key))
-                .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE)?,
+                .find(|key| !keys[key - min_key])
+                .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?,
             // This is an existing credential being updated, we reuse its key.
             Some(x) => x,
         };
@@ -298,7 +306,7 @@ impl PersistentStore {
         match self.store.find(key::GLOBAL_SIGNATURE_COUNTER)? {
             None => Ok(INITIAL_SIGNATURE_COUNTER),
             Some(value) if value.len() == 4 => Ok(u32::from_ne_bytes(*array_ref!(&value, 0, 4))),
-            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -317,9 +325,9 @@ impl PersistentStore {
         let master_keys = self
             .store
             .find(key::MASTER_KEYS)?
-            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE)?;
+            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?;
         if master_keys.len() != 64 {
-            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         Ok(MasterKeys {
             encryption: *array_ref![master_keys, 0, 32],
@@ -334,7 +342,7 @@ impl PersistentStore {
             Some(pin_hash) => pin_hash,
         };
         if pin_hash.len() != PIN_AUTH_LENGTH {
-            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         Ok(Some(*array_ref![pin_hash, 0, PIN_AUTH_LENGTH]))
     }
@@ -354,7 +362,7 @@ impl PersistentStore {
         match self.store.find(key::PIN_RETRIES)? {
             None => Ok(MAX_PIN_RETRIES),
             Some(value) if value.len() == 1 => Ok(value[0]),
-            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -379,7 +387,7 @@ impl PersistentStore {
         match self.store.find(key::MIN_PIN_LENGTH)? {
             None => Ok(DEFAULT_MIN_PIN_LENGTH),
             Some(value) if value.len() == 1 => Ok(value[0]),
-            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -437,7 +445,7 @@ impl PersistentStore {
                     key_material::ATTESTATION_PRIVATE_KEY_LENGTH
                 ]))
             }
-            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -481,9 +489,9 @@ impl PersistentStore {
         let aaguid = self
             .store
             .find(key::AAGUID)?
-            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE)?;
+            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?;
         if aaguid.len() != key_material::AAGUID_LENGTH {
-            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         Ok(*array_ref![aaguid, 0, key_material::AAGUID_LENGTH])
     }
@@ -521,9 +529,7 @@ impl From<persistent_store::StoreError> for Ctap2StatusCode {
             StoreError::InvalidArgument => Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR,
             // This error is not expected. The storage has been tempered with. We could erase the
             // storage.
-            StoreError::InvalidStorage => {
-                Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE
-            }
+            StoreError::InvalidStorage => Ctap2StatusCode::CTAP2_ERR_VENDOR_HARDWARE_FAILURE,
             // This error is not expected. The kernel is failing our syscalls.
             StoreError::StorageError => Ctap2StatusCode::CTAP1_ERR_OTHER,
         }
@@ -566,7 +572,7 @@ impl<'a> IterCredentials<'a> {
     /// instead of statements only.
     fn unwrap<T>(&mut self, x: Option<T>) -> Option<T> {
         if x.is_none() {
-            *self.result = Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            *self.result = Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         x
     }

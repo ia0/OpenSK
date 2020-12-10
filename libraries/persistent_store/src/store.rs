@@ -638,8 +638,7 @@ impl<S: Storage> Store<S> {
     /// Completes a possible partial entry deletion.
     fn recover_delete_user(&mut self, pos: Position, length: Nat) -> StoreResult<()> {
         self.init_page(pos, pos + length)?;
-        self.delete_pos(pos, length)?;
-        Ok(())
+        self.delete_pos(pos, length)
     }
 
     /// Checks that a handle still points in the current window.
@@ -703,9 +702,8 @@ impl<S: Storage> Store<S> {
             let pos = head;
             match self.parse_entry(&mut head)? {
                 ParsedEntry::Tail => break,
-                // This can happen if we copy to the next page. This is actually the tail but we
-                // read what we just copied. This could be made cleaner by providing `end` to
-                // `parse_entry`.
+                // This can happen if we copy to the next page. We actually reached the tail but we
+                // read what we just copied.
                 ParsedEntry::Partial if head > end => break,
                 ParsedEntry::User(_) => (),
                 ParsedEntry::Padding => continue,

@@ -21,6 +21,7 @@ use crate::ctap::key_material;
 use crate::ctap::pin_protocol_v1::PIN_AUTH_LENGTH;
 use crate::ctap::status_code::Ctap2StatusCode;
 use crate::ctap::INITIAL_SIGNATURE_COUNTER;
+use crate::embedded_flash::{new_storage, Storage};
 #[cfg(feature = "with_ctap2_1")]
 use alloc::string::String;
 use alloc::vec;
@@ -30,11 +31,6 @@ use arrayref::array_ref;
 use cbor::cbor_array_vec;
 use core::convert::TryInto;
 use crypto::rng256::Rng256;
-
-#[cfg(any(test, feature = "ram_storage"))]
-type Storage = persistent_store::BufferStorage;
-#[cfg(not(any(test, feature = "ram_storage")))]
-type Storage = crate::embedded_flash::SyscallStorage;
 
 // Those constants may be modified before compilation to tune the behavior of the key.
 //
@@ -54,9 +50,6 @@ type Storage = crate::embedded_flash::SyscallStorage;
 // We have: I = (P * 4084 - 5107 - K * S) / 8 * C
 //
 // With P=20 and K=150, we have I=2M which is enough for 500 increments per day for 10 years.
-#[cfg(feature = "ram_storage")]
-const NUM_PAGES: usize = 3;
-#[cfg(not(feature = "ram_storage"))]
 const NUM_PAGES: usize = 20;
 const MAX_SUPPORTED_RESIDENTIAL_KEYS: usize = 150;
 
@@ -92,39 +85,12 @@ impl PersistentStore {
     ///
     /// This should be at most one instance of persistent store per program lifetime.
     pub fn new(rng: &mut impl Rng256) -> PersistentStore {
-        #[cfg(not(any(test, feature = "ram_storage")))]
-        let storage = PersistentStore::new_prod_storage();
-        #[cfg(any(test, feature = "ram_storage"))]
-        let storage = PersistentStore::new_test_storage();
+        let storage = new_storage(NUM_PAGES);
         let mut store = PersistentStore {
             store: persistent_store::Store::new(storage).ok().unwrap(),
         };
         store.init(rng).unwrap();
         store
-    }
-
-    /// Creates a syscall storage in flash.
-    #[cfg(not(any(test, feature = "ram_storage")))]
-    fn new_prod_storage() -> Storage {
-        Storage::new(NUM_PAGES).unwrap()
-    }
-
-    /// Creates a buffer storage in RAM.
-    #[cfg(any(test, feature = "ram_storage"))]
-    fn new_test_storage() -> Storage {
-        #[cfg(not(test))]
-        const PAGE_SIZE: usize = 0x100;
-        #[cfg(test)]
-        const PAGE_SIZE: usize = 0x1000;
-        let store = vec![0xff; NUM_PAGES * PAGE_SIZE].into_boxed_slice();
-        let options = persistent_store::BufferOptions {
-            word_size: 4,
-            page_size: PAGE_SIZE,
-            max_word_writes: 2,
-            max_page_erases: 10000,
-            strict_mode: true,
-        };
-        Storage::new(store, options)
     }
 
     /// Initializes the store by creating missing objects.

@@ -21,9 +21,9 @@ use crate::ctap::key_material;
 use crate::ctap::pin_protocol_v1::PIN_AUTH_LENGTH;
 use crate::ctap::status_code::Ctap2StatusCode;
 use crate::ctap::INITIAL_SIGNATURE_COUNTER;
+use crate::embedded_flash::{new_storage, Storage};
 #[cfg(feature = "with_ctap2_1")]
 use alloc::string::String;
-#[cfg(any(test, feature = "ram_storage", feature = "with_ctap2_1"))]
 use alloc::vec;
 use alloc::vec::Vec;
 use arrayref::array_ref;
@@ -31,11 +31,6 @@ use arrayref::array_ref;
 use cbor::cbor_array_vec;
 use core::convert::TryInto;
 use crypto::rng256::Rng256;
-
-#[cfg(any(test, feature = "ram_storage"))]
-type Storage = persistent_store::BufferStorage;
-#[cfg(not(any(test, feature = "ram_storage")))]
-type Storage = crate::embedded_flash::SyscallStorage;
 
 // Those constants may be modified before compilation to tune the behavior of the key.
 //
@@ -55,9 +50,6 @@ type Storage = crate::embedded_flash::SyscallStorage;
 // We have: I = (P * 4084 - 5107 - K * S) / 8 * C
 //
 // With P=20 and K=150, we have I=2M which is enough for 500 increments per day for 10 years.
-#[cfg(feature = "ram_storage")]
-const NUM_PAGES: usize = 3;
-#[cfg(not(feature = "ram_storage"))]
 const NUM_PAGES: usize = 20;
 const MAX_SUPPORTED_RESIDENTIAL_KEYS: usize = 150;
 
@@ -93,39 +85,12 @@ impl PersistentStore {
     ///
     /// This should be at most one instance of persistent store per program lifetime.
     pub fn new(rng: &mut impl Rng256) -> PersistentStore {
-        #[cfg(not(any(test, feature = "ram_storage")))]
-        let storage = PersistentStore::new_prod_storage();
-        #[cfg(any(test, feature = "ram_storage"))]
-        let storage = PersistentStore::new_test_storage();
+        let storage = new_storage(NUM_PAGES);
         let mut store = PersistentStore {
             store: persistent_store::Store::new(storage).ok().unwrap(),
         };
         store.init(rng).unwrap();
         store
-    }
-
-    /// Creates a syscall storage in flash.
-    #[cfg(not(any(test, feature = "ram_storage")))]
-    fn new_prod_storage() -> Storage {
-        Storage::new(NUM_PAGES).unwrap()
-    }
-
-    /// Creates a buffer storage in RAM.
-    #[cfg(any(test, feature = "ram_storage"))]
-    fn new_test_storage() -> Storage {
-        #[cfg(not(test))]
-        const PAGE_SIZE: usize = 0x100;
-        #[cfg(test)]
-        const PAGE_SIZE: usize = 0x1000;
-        let store = vec![0xff; NUM_PAGES * PAGE_SIZE].into_boxed_slice();
-        let options = persistent_store::BufferOptions {
-            word_size: 4,
-            page_size: PAGE_SIZE,
-            max_word_writes: 2,
-            max_page_erases: 10000,
-            strict_mode: true,
-        };
-        Storage::new(store, options)
     }
 
     /// Initializes the store by creating missing objects.
@@ -139,6 +104,17 @@ impl PersistentStore {
             master_keys.extend_from_slice(&master_hmac_key);
             self.store.insert(key::MASTER_KEYS, &master_keys)?;
         }
+
+        // Generate and store the CredRandom secrets if they are missing.
+        if self.store.find_handle(key::CRED_RANDOM_SECRET)?.is_none() {
+            let cred_random_with_uv = rng.gen_uniform_u8x32();
+            let cred_random_without_uv = rng.gen_uniform_u8x32();
+            let mut cred_random = Vec::with_capacity(64);
+            cred_random.extend_from_slice(&cred_random_without_uv);
+            cred_random.extend_from_slice(&cred_random_with_uv);
+            self.store.insert(key::CRED_RANDOM_SECRET, &cred_random)?;
+        }
+
         // TODO(jmichel): remove this when vendor command is in place
         #[cfg(not(test))]
         self.load_attestation_data_from_firmware()?;
@@ -206,32 +182,41 @@ impl PersistentStore {
     ) -> Result<(), Ctap2StatusCode> {
         // Holds the key of the existing credential if this is an update.
         let mut old_key = None;
-        // Holds the unordered list of used keys.
-        let mut keys = Vec::new();
+        let min_key = key::CREDENTIALS.start;
+        // Holds whether a key is used (indices are shifted by min_key).
+        let mut keys = vec![false; MAX_SUPPORTED_RESIDENTIAL_KEYS];
         let mut iter_result = Ok(());
         let iter = self.iter_credentials(&mut iter_result)?;
         for (key, credential) in iter {
-            keys.push(key);
+            if key < min_key
+                || key - min_key >= MAX_SUPPORTED_RESIDENTIAL_KEYS
+                || keys[key - min_key]
+            {
+                return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
+            }
+            keys[key - min_key] = true;
             if credential.rp_id == new_credential.rp_id
                 && credential.user_handle == new_credential.user_handle
             {
                 if old_key.is_some() {
-                    return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+                    return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
                 }
                 old_key = Some(key);
             }
         }
         iter_result?;
-        if old_key.is_none() && keys.len() >= MAX_SUPPORTED_RESIDENTIAL_KEYS {
+        if old_key.is_none()
+            && keys.iter().filter(|&&x| x).count() >= MAX_SUPPORTED_RESIDENTIAL_KEYS
+        {
             return Err(Ctap2StatusCode::CTAP2_ERR_KEY_STORE_FULL);
         }
         let key = match old_key {
             // This is a new credential being added, we need to allocate a free key. We choose the
-            // first available key. This is quadratic in the number of existing keys.
+            // first available key.
             None => key::CREDENTIALS
                 .take(MAX_SUPPORTED_RESIDENTIAL_KEYS)
-                .find(|key| !keys.contains(key))
-                .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE)?,
+                .find(|key| !keys[key - min_key])
+                .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?,
             // This is an existing credential being updated, we reuse its key.
             Some(x) => x,
         };
@@ -298,7 +283,7 @@ impl PersistentStore {
         match self.store.find(key::GLOBAL_SIGNATURE_COUNTER)? {
             None => Ok(INITIAL_SIGNATURE_COUNTER),
             Some(value) if value.len() == 4 => Ok(u32::from_ne_bytes(*array_ref!(&value, 0, 4))),
-            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -317,14 +302,27 @@ impl PersistentStore {
         let master_keys = self
             .store
             .find(key::MASTER_KEYS)?
-            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE)?;
+            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?;
         if master_keys.len() != 64 {
-            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         Ok(MasterKeys {
             encryption: *array_ref![master_keys, 0, 32],
             hmac: *array_ref![master_keys, 32, 32],
         })
+    }
+
+    /// Returns the CredRandom secret.
+    pub fn cred_random_secret(&self, has_uv: bool) -> Result<[u8; 32], Ctap2StatusCode> {
+        let cred_random_secret = self
+            .store
+            .find(key::CRED_RANDOM_SECRET)?
+            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?;
+        if cred_random_secret.len() != 64 {
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
+        }
+        let offset = if has_uv { 32 } else { 0 };
+        Ok(*array_ref![cred_random_secret, offset, 32])
     }
 
     /// Returns the PIN hash if defined.
@@ -334,7 +332,7 @@ impl PersistentStore {
             Some(pin_hash) => pin_hash,
         };
         if pin_hash.len() != PIN_AUTH_LENGTH {
-            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         Ok(Some(*array_ref![pin_hash, 0, PIN_AUTH_LENGTH]))
     }
@@ -354,7 +352,7 @@ impl PersistentStore {
         match self.store.find(key::PIN_RETRIES)? {
             None => Ok(MAX_PIN_RETRIES),
             Some(value) if value.len() == 1 => Ok(value[0]),
-            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -379,7 +377,7 @@ impl PersistentStore {
         match self.store.find(key::MIN_PIN_LENGTH)? {
             None => Ok(DEFAULT_MIN_PIN_LENGTH),
             Some(value) if value.len() == 1 => Ok(value[0]),
-            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            _ => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -437,7 +435,7 @@ impl PersistentStore {
                     key_material::ATTESTATION_PRIVATE_KEY_LENGTH
                 ]))
             }
-            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE),
+            Some(_) => Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR),
         }
     }
 
@@ -481,9 +479,9 @@ impl PersistentStore {
         let aaguid = self
             .store
             .find(key::AAGUID)?
-            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE)?;
+            .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?;
         if aaguid.len() != key_material::AAGUID_LENGTH {
-            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         Ok(*array_ref![aaguid, 0, key_material::AAGUID_LENGTH])
     }
@@ -521,9 +519,7 @@ impl From<persistent_store::StoreError> for Ctap2StatusCode {
             StoreError::InvalidArgument => Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR,
             // This error is not expected. The storage has been tempered with. We could erase the
             // storage.
-            StoreError::InvalidStorage => {
-                Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE
-            }
+            StoreError::InvalidStorage => Ctap2StatusCode::CTAP2_ERR_VENDOR_HARDWARE_FAILURE,
             // This error is not expected. The kernel is failing our syscalls.
             StoreError::StorageError => Ctap2StatusCode::CTAP1_ERR_OTHER,
         }
@@ -566,7 +562,7 @@ impl<'a> IterCredentials<'a> {
     /// instead of statements only.
     fn unwrap<T>(&mut self, x: Option<T>) -> Option<T> {
         if x.is_none() {
-            *self.result = Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INVALID_PERSISTENT_STORAGE);
+            *self.result = Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
         x
     }
@@ -651,7 +647,6 @@ mod test {
             rp_id: String::from(rp_id),
             user_handle,
             user_display_name: None,
-            cred_random: None,
             cred_protect_policy: None,
             creation_order: 0,
             user_name: None,
@@ -808,7 +803,6 @@ mod test {
             rp_id: String::from("example.com"),
             user_handle: vec![0x00],
             user_display_name: None,
-            cred_random: None,
             cred_protect_policy: Some(
                 CredentialProtectionPolicy::UserVerificationOptionalWithCredentialIdList,
             ),
@@ -854,7 +848,6 @@ mod test {
             rp_id: String::from("example.com"),
             user_handle: vec![0x00],
             user_display_name: None,
-            cred_random: None,
             cred_protect_policy: None,
             creation_order: 0,
             user_name: None,
@@ -876,7 +869,6 @@ mod test {
             rp_id: String::from("example.com"),
             user_handle: vec![0x00],
             user_display_name: None,
-            cred_random: None,
             cred_protect_policy: Some(CredentialProtectionPolicy::UserVerificationRequired),
             creation_order: 0,
             user_name: None,
@@ -895,7 +887,7 @@ mod test {
         let mut rng = ThreadRng256 {};
         let mut persistent_store = PersistentStore::new(&mut rng);
 
-        // Master keys stay the same between resets.
+        // Master keys stay the same within the same CTAP reset cycle.
         let master_keys_1 = persistent_store.master_keys().unwrap();
         let master_keys_2 = persistent_store.master_keys().unwrap();
         assert_eq!(master_keys_2.encryption, master_keys_1.encryption);
@@ -909,6 +901,28 @@ mod test {
         let master_keys_3 = persistent_store.master_keys().unwrap();
         assert!(master_keys_3.encryption != master_encryption_key.as_slice());
         assert!(master_keys_3.hmac != master_hmac_key.as_slice());
+    }
+
+    #[test]
+    fn test_cred_random_secret() {
+        let mut rng = ThreadRng256 {};
+        let mut persistent_store = PersistentStore::new(&mut rng);
+
+        // CredRandom secrets stay the same within the same CTAP reset cycle.
+        let cred_random_with_uv_1 = persistent_store.cred_random_secret(true).unwrap();
+        let cred_random_without_uv_1 = persistent_store.cred_random_secret(false).unwrap();
+        let cred_random_with_uv_2 = persistent_store.cred_random_secret(true).unwrap();
+        let cred_random_without_uv_2 = persistent_store.cred_random_secret(false).unwrap();
+        assert_eq!(cred_random_with_uv_1, cred_random_with_uv_2);
+        assert_eq!(cred_random_without_uv_1, cred_random_without_uv_2);
+
+        // CredRandom secrets change after reset. This test may fail if the random generator produces the
+        // same keys.
+        persistent_store.reset(&mut rng).unwrap();
+        let cred_random_with_uv_3 = persistent_store.cred_random_secret(true).unwrap();
+        let cred_random_without_uv_3 = persistent_store.cred_random_secret(false).unwrap();
+        assert!(cred_random_with_uv_1 != cred_random_with_uv_3);
+        assert!(cred_random_without_uv_1 != cred_random_without_uv_3);
     }
 
     #[test]
@@ -1078,7 +1092,6 @@ mod test {
             rp_id: String::from("example.com"),
             user_handle: vec![0x00],
             user_display_name: None,
-            cred_random: None,
             cred_protect_policy: None,
             creation_order: 0,
             user_name: None,

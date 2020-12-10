@@ -349,6 +349,7 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(feature = "std")]
 mod buffer;
 #[cfg(feature = "std")]
 mod driver;
@@ -358,6 +359,7 @@ mod model;
 mod storage;
 mod store;
 
+#[cfg(feature = "std")]
 pub use self::buffer::{BufferCorruptFunction, BufferOptions, BufferStorage};
 #[cfg(feature = "std")]
 pub use self::driver::{

@@ -99,7 +99,7 @@ pub type StoreResult<T> = Result<T, StoreError>;
 ///
 /// [capacity]: struct.Store.html#method.capacity
 /// [lifetime]: struct.Store.html#method.lifetime
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct StoreRatio {
     /// How much of the metric is used.
     pub(crate) used: Nat,

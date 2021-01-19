@@ -1,4 +1,4 @@
-// Copyright 2019 Google LLC
+// Copyright 2019-2021 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
 
 use super::data_formats::{
     extract_array, extract_bool, extract_byte_string, extract_map, extract_text_string,
-    extract_unsigned, ok_or_missing, ClientPinSubCommand, CoseKey, GetAssertionExtensions,
-    GetAssertionOptions, MakeCredentialExtensions, MakeCredentialOptions,
-    PublicKeyCredentialDescriptor, PublicKeyCredentialParameter, PublicKeyCredentialRpEntity,
-    PublicKeyCredentialUserEntity,
+    extract_unsigned, ok_or_missing, ClientPinSubCommand, ConfigSubCommand, ConfigSubCommandParams,
+    CoseKey, GetAssertionExtensions, GetAssertionOptions, MakeCredentialExtensions,
+    MakeCredentialOptions, PublicKeyCredentialDescriptor, PublicKeyCredentialParameter,
+    PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity, SetMinPinLengthParams,
 };
 use super::key_material;
 use super::status_code::Ctap2StatusCode;
@@ -41,8 +41,8 @@ pub enum Command {
     AuthenticatorClientPin(AuthenticatorClientPinParameters),
     AuthenticatorReset,
     AuthenticatorGetNextAssertion,
-    #[cfg(feature = "with_ctap2_1")]
     AuthenticatorSelection,
+    AuthenticatorConfig(AuthenticatorConfigParameters),
     // TODO(kaczmarczyck) implement FIDO 2.1 commands (see below consts)
     // Vendor specific commands
     AuthenticatorVendorConfigure(AuthenticatorVendorConfigureParameters),
@@ -111,10 +111,15 @@ impl Command {
                 // Parameters are ignored.
                 Ok(Command::AuthenticatorGetNextAssertion)
             }
-            #[cfg(feature = "with_ctap2_1")]
             Command::AUTHENTICATOR_SELECTION => {
                 // Parameters are ignored.
                 Ok(Command::AuthenticatorSelection)
+            }
+            Command::AUTHENTICATOR_CONFIG => {
+                let decoded_cbor = cbor::read(&bytes[1..])?;
+                Ok(Command::AuthenticatorConfig(
+                    AuthenticatorConfigParameters::try_from(decoded_cbor)?,
+                ))
             }
             Command::AUTHENTICATOR_VENDOR_CONFIGURE => {
                 let decoded_cbor = cbor::read(&bytes[1..])?;
@@ -292,13 +297,7 @@ pub struct AuthenticatorClientPinParameters {
     pub pin_auth: Option<Vec<u8>>,
     pub new_pin_enc: Option<Vec<u8>>,
     pub pin_hash_enc: Option<Vec<u8>>,
-    #[cfg(feature = "with_ctap2_1")]
-    pub min_pin_length: Option<u8>,
-    #[cfg(feature = "with_ctap2_1")]
-    pub min_pin_length_rp_ids: Option<Vec<String>>,
-    #[cfg(feature = "with_ctap2_1")]
     pub permissions: Option<u8>,
-    #[cfg(feature = "with_ctap2_1")]
     pub permissions_rp_id: Option<String>,
 }
 
@@ -306,7 +305,6 @@ impl TryFrom<cbor::Value> for AuthenticatorClientPinParameters {
     type Error = Ctap2StatusCode;
 
     fn try_from(cbor_value: cbor::Value) -> Result<Self, Ctap2StatusCode> {
-        #[cfg(not(feature = "with_ctap2_1"))]
         destructure_cbor_map! {
             let {
                 1 => pin_protocol,
@@ -315,19 +313,6 @@ impl TryFrom<cbor::Value> for AuthenticatorClientPinParameters {
                 4 => pin_auth,
                 5 => new_pin_enc,
                 6 => pin_hash_enc,
-            } = extract_map(cbor_value)?;
-        }
-        #[cfg(feature = "with_ctap2_1")]
-        destructure_cbor_map! {
-            let {
-                1 => pin_protocol,
-                2 => sub_command,
-                3 => key_agreement,
-                4 => pin_auth,
-                5 => new_pin_enc,
-                6 => pin_hash_enc,
-                7 => min_pin_length,
-                8 => min_pin_length_rp_ids,
                 9 => permissions,
                 10 => permissions_rp_id,
             } = extract_map(cbor_value)?;
@@ -335,35 +320,16 @@ impl TryFrom<cbor::Value> for AuthenticatorClientPinParameters {
 
         let pin_protocol = extract_unsigned(ok_or_missing(pin_protocol)?)?;
         let sub_command = ClientPinSubCommand::try_from(ok_or_missing(sub_command)?)?;
-        let key_agreement = key_agreement.map(extract_map).transpose()?.map(CoseKey);
+        let key_agreement = key_agreement.map(CoseKey::try_from).transpose()?;
         let pin_auth = pin_auth.map(extract_byte_string).transpose()?;
         let new_pin_enc = new_pin_enc.map(extract_byte_string).transpose()?;
         let pin_hash_enc = pin_hash_enc.map(extract_byte_string).transpose()?;
-        #[cfg(feature = "with_ctap2_1")]
-        let min_pin_length = min_pin_length
-            .map(extract_unsigned)
-            .transpose()?
-            .map(u8::try_from)
-            .transpose()
-            .map_err(|_| Ctap2StatusCode::CTAP2_ERR_PIN_POLICY_VIOLATION)?;
-        #[cfg(feature = "with_ctap2_1")]
-        let min_pin_length_rp_ids = match min_pin_length_rp_ids {
-            Some(entry) => Some(
-                extract_array(entry)?
-                    .into_iter()
-                    .map(extract_text_string)
-                    .collect::<Result<Vec<String>, Ctap2StatusCode>>()?,
-            ),
-            None => None,
-        };
-        #[cfg(feature = "with_ctap2_1")]
         // We expect a bit field of 8 bits, and drop everything else.
         // This means we ignore extensions in future versions.
         let permissions = permissions
             .map(extract_unsigned)
             .transpose()?
             .map(|p| p as u8);
-        #[cfg(feature = "with_ctap2_1")]
         let permissions_rp_id = permissions_rp_id.map(extract_text_string).transpose()?;
 
         Ok(AuthenticatorClientPinParameters {
@@ -373,14 +339,48 @@ impl TryFrom<cbor::Value> for AuthenticatorClientPinParameters {
             pin_auth,
             new_pin_enc,
             pin_hash_enc,
-            #[cfg(feature = "with_ctap2_1")]
-            min_pin_length,
-            #[cfg(feature = "with_ctap2_1")]
-            min_pin_length_rp_ids,
-            #[cfg(feature = "with_ctap2_1")]
             permissions,
-            #[cfg(feature = "with_ctap2_1")]
             permissions_rp_id,
+        })
+    }
+}
+
+#[cfg_attr(any(test, feature = "debug_ctap"), derive(Debug, PartialEq))]
+pub struct AuthenticatorConfigParameters {
+    pub sub_command: ConfigSubCommand,
+    pub sub_command_params: Option<ConfigSubCommandParams>,
+    pub pin_uv_auth_param: Option<Vec<u8>>,
+    pub pin_uv_auth_protocol: Option<u64>,
+}
+
+impl TryFrom<cbor::Value> for AuthenticatorConfigParameters {
+    type Error = Ctap2StatusCode;
+
+    fn try_from(cbor_value: cbor::Value) -> Result<Self, Ctap2StatusCode> {
+        destructure_cbor_map! {
+            let {
+                0x01 => sub_command,
+                0x02 => sub_command_params,
+                0x03 => pin_uv_auth_param,
+                0x04 => pin_uv_auth_protocol,
+            } = extract_map(cbor_value)?;
+        }
+
+        let sub_command = ConfigSubCommand::try_from(ok_or_missing(sub_command)?)?;
+        let sub_command_params = match sub_command {
+            ConfigSubCommand::SetMinPinLength => Some(ConfigSubCommandParams::SetMinPinLength(
+                SetMinPinLengthParams::try_from(ok_or_missing(sub_command_params)?)?,
+            )),
+            _ => None,
+        };
+        let pin_uv_auth_param = pin_uv_auth_param.map(extract_byte_string).transpose()?;
+        let pin_uv_auth_protocol = pin_uv_auth_protocol.map(extract_unsigned).transpose()?;
+
+        Ok(AuthenticatorConfigParameters {
+            sub_command,
+            sub_command_params,
+            pin_uv_auth_param,
+            pin_uv_auth_protocol,
         })
     }
 }
@@ -449,8 +449,8 @@ mod test {
     };
     use super::super::ES256_CRED_PARAM;
     use super::*;
-    use alloc::collections::BTreeMap;
     use cbor::{cbor_array, cbor_map};
+    use crypto::rng256::ThreadRng256;
 
     #[test]
     fn test_from_cbor_make_credential_parameters() {
@@ -560,27 +560,18 @@ mod test {
 
     #[test]
     fn test_from_cbor_client_pin_parameters() {
-        // TODO(kaczmarczyck) inline the #cfg when #128 is resolved:
-        // https://github.com/google/OpenSK/issues/128
-        #[cfg(not(feature = "with_ctap2_1"))]
+        let mut rng = ThreadRng256 {};
+        let sk = crypto::ecdh::SecKey::gensk(&mut rng);
+        let pk = sk.genpk();
+        let cose_key = CoseKey::from(pk);
+
         let cbor_value = cbor_map! {
             1 => 1,
             2 => ClientPinSubCommand::GetPinRetries,
-            3 => cbor_map!{},
+            3 => cbor::Value::from(cose_key.clone()),
             4 => vec! [0xBB],
             5 => vec! [0xCC],
             6 => vec! [0xDD],
-        };
-        #[cfg(feature = "with_ctap2_1")]
-        let cbor_value = cbor_map! {
-            1 => 1,
-            2 => ClientPinSubCommand::GetPinRetries,
-            3 => cbor_map!{},
-            4 => vec! [0xBB],
-            5 => vec! [0xCC],
-            6 => vec! [0xDD],
-            7 => 4,
-            8 => cbor_array!["example.com"],
             9 => 0x03,
             10 => "example.com",
         };
@@ -590,17 +581,11 @@ mod test {
         let expected_pin_protocol_parameters = AuthenticatorClientPinParameters {
             pin_protocol: 1,
             sub_command: ClientPinSubCommand::GetPinRetries,
-            key_agreement: Some(CoseKey(BTreeMap::new())),
+            key_agreement: Some(cose_key),
             pin_auth: Some(vec![0xBB]),
             new_pin_enc: Some(vec![0xCC]),
             pin_hash_enc: Some(vec![0xDD]),
-            #[cfg(feature = "with_ctap2_1")]
-            min_pin_length: Some(4),
-            #[cfg(feature = "with_ctap2_1")]
-            min_pin_length_rp_ids: Some(vec!["example.com".to_string()]),
-            #[cfg(feature = "with_ctap2_1")]
             permissions: Some(0x03),
-            #[cfg(feature = "with_ctap2_1")]
             permissions_rp_id: Some("example.com".to_string()),
         };
 
@@ -632,7 +617,6 @@ mod test {
         assert_eq!(command, Ok(Command::AuthenticatorGetNextAssertion));
     }
 
-    #[cfg(feature = "with_ctap2_1")]
     #[test]
     fn test_deserialize_selection() {
         let cbor_bytes = [Command::AUTHENTICATOR_SELECTION];

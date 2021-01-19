@@ -1,4 +1,4 @@
-// Copyright 2019 Google LLC
+// Copyright 2019-2021 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -219,7 +219,7 @@ impl CtapHid {
                                 cid,
                                 cmd: CtapHid::COMMAND_CBOR,
                                 payload: vec![
-                                    Ctap2StatusCode::CTAP2_ERR_VENDOR_RESPONSE_TOO_LONG as u8,
+                                    Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR as u8,
                                 ],
                             })
                             .unwrap()

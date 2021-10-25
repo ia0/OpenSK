@@ -15,9 +15,11 @@ if [[ ! -e "${LLVM_COV}" ]]; then
   rustup component add --toolchain=nightly llvm-tools-preview
 fi
 
-if ! which cargo-fuzz >/dev/null 2>/dev/null; then
-  cargo +nightly install cargo-fuzz
-fi
+for i in cargo-fuzz rustfilt; do
+  if ! which "${i}" >/dev/null 2>/dev/null; then
+    cargo +nightly install "${i}"
+  fi
+done
 
 PROFDATA="fuzz/coverage/store/coverage.profdata"
 

@@ -15,6 +15,11 @@
 /// Number of keys that persist the CTAP reset command.
 pub const NUM_PERSISTENT_KEYS: usize = 20;
 
+/// Number of keys per credential.
+///
+/// We need multiple keys per credential because credentials can be bigger than 1024 bytes.
+pub const NUM_KEYS_PER_CREDENTIAL: usize = 4;
+
 /// Defines a key given its name and value or range of values.
 macro_rules! make_key {
     ($(#[$doc: meta])* $name: ident = $key: literal..$end: literal) => {
@@ -142,7 +147,16 @@ mod test {
     #[test]
     fn enough_credentials() {
         use crate::ctap::customization::MAX_SUPPORTED_RESIDENT_KEYS;
-        assert!(MAX_SUPPORTED_RESIDENT_KEYS <= CREDENTIALS.end - CREDENTIALS.start);
+        assert!(
+            MAX_SUPPORTED_RESIDENT_KEYS * NUM_KEYS_PER_CREDENTIAL
+                <= CREDENTIALS.end - CREDENTIALS.start
+        );
+    }
+
+    #[test]
+    fn credentials_are_aligned() {
+        assert_eq!(CREDENTIALS.start % NUM_KEYS_PER_CREDENTIAL, 0);
+        assert_eq!(CREDENTIALS.end % NUM_KEYS_PER_CREDENTIAL, 0);
     }
 
     #[test]

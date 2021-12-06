@@ -232,7 +232,11 @@ pub const MAX_RP_IDS_LENGTH: usize = 8;
 ///
 /// With P=20 and K=150, we have I=2M which is enough for 500 increments per day
 /// for 10 years.
-pub const MAX_SUPPORTED_RESIDENT_KEYS: usize = 150;
+// TODO(ia0): We need to know the average size of a key (whether it's using hybrid or not). The
+// current value of 50 is safe to not run out of keys (maximum 4 keys per credential) and to not go
+// over the storage capacity (hybrid key is less than 3k apparently). But we could probably increase
+// this value to at least 75 or more if needed.
+pub const MAX_SUPPORTED_RESIDENT_KEYS: usize = 50;
 
 #[cfg(test)]
 mod test {

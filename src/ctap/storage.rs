@@ -34,6 +34,7 @@ use arrayref::array_ref;
 use core::cmp;
 use core::convert::TryInto;
 use crypto::rng256::Rng256;
+use key::NUM_KEYS_PER_CREDENTIAL;
 use persistent_store::{fragment, StoreUpdate};
 use sk_cbor::cbor_array_vec;
 
@@ -110,12 +111,14 @@ impl PersistentStore {
     /// Returns `CTAP2_ERR_VENDOR_INTERNAL_ERROR` if the key does not hold a valid credential.
     pub fn get_credential(&self, key: usize) -> Result<PublicKeyCredentialSource, Ctap2StatusCode> {
         let min_key = key::CREDENTIALS.start;
-        if key < min_key || key >= min_key + MAX_SUPPORTED_RESIDENT_KEYS {
+        if key < min_key
+            || key >= min_key + MAX_SUPPORTED_RESIDENT_KEYS * NUM_KEYS_PER_CREDENTIAL
+            || key % NUM_KEYS_PER_CREDENTIAL != 0
+        {
             return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
         }
-        let credential_entry = self
-            .store
-            .find(key)?
+        let keys = key..key + NUM_KEYS_PER_CREDENTIAL;
+        let credential_entry = fragment::read(&self.store, &keys)?
             .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?;
         deserialize_credential(&credential_entry)
             .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)
@@ -182,11 +185,14 @@ impl PersistentStore {
         let mut iter_result = Ok(());
         let iter = self.iter_credentials(&mut iter_result)?;
         for (key, credential) in iter {
-            if key < min_key || key - min_key >= MAX_SUPPORTED_RESIDENT_KEYS || keys[key - min_key]
+            if key < min_key
+                || key - min_key >= MAX_SUPPORTED_RESIDENT_KEYS * NUM_KEYS_PER_CREDENTIAL
+                || key % NUM_KEYS_PER_CREDENTIAL != 0
+                || keys[(key - min_key) / NUM_KEYS_PER_CREDENTIAL]
             {
                 return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
             }
-            keys[key - min_key] = true;
+            keys[(key - min_key) / NUM_KEYS_PER_CREDENTIAL] = true;
             if credential.rp_id == new_credential.rp_id
                 && credential.user_handle == new_credential.user_handle
             {
@@ -204,14 +210,16 @@ impl PersistentStore {
             // This is a new credential being added, we need to allocate a free key. We choose the
             // first available key.
             None => key::CREDENTIALS
+                .filter(|x| x % NUM_KEYS_PER_CREDENTIAL == 0)
                 .take(MAX_SUPPORTED_RESIDENT_KEYS)
-                .find(|key| !keys[key - min_key])
+                .find(|key| !keys[(key - min_key) / NUM_KEYS_PER_CREDENTIAL])
                 .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?,
             // This is an existing credential being updated, we reuse its key.
             Some(x) => x,
         };
         let value = serialize_credential(new_credential)?;
-        self.store.insert(key, &value)?;
+        let keys = key..key + NUM_KEYS_PER_CREDENTIAL;
+        fragment::write(&mut self.store, &keys, &value)?;
         Ok(())
     }
 
@@ -240,7 +248,8 @@ impl PersistentStore {
         credential.user_display_name = user.user_display_name;
         credential.user_icon = user.user_icon;
         let value = serialize_credential(credential)?;
-        Ok(self.store.insert(key, &value)?)
+        let keys = key..key + NUM_KEYS_PER_CREDENTIAL;
+        Ok(fragment::write(&mut self.store, &keys, &value)?)
     }
 
     /// Returns the number of credentials.
@@ -706,10 +715,11 @@ impl<'a> Iterator for IterCredentials<'a> {
         while let Some(next) = self.iter.next() {
             let handle = self.unwrap(next.ok())?;
             let key = handle.get_key();
-            if !key::CREDENTIALS.contains(&key) {
+            if !key::CREDENTIALS.contains(&key) || key % NUM_KEYS_PER_CREDENTIAL != 0 {
                 continue;
             }
-            let value = self.unwrap(handle.get_value(self.store).ok())?;
+            let keys = key..key + NUM_KEYS_PER_CREDENTIAL;
+            let value = self.unwrap(fragment::read(self.store, &keys).ok().flatten())?;
             let credential = self.unwrap(deserialize_credential(&value))?;
             return Some((key, credential));
         }
@@ -777,7 +787,7 @@ mod test {
     }
 
     #[test]
-    fn test_store() {
+    fn test_store_credential() {
         let mut rng = ThreadRng256 {};
         let mut persistent_store = PersistentStore::new(&mut rng);
         assert_eq!(persistent_store.count_credentials().unwrap(), 0);
@@ -953,6 +963,21 @@ mod test {
             let cred = persistent_store.get_credential(key).unwrap();
             assert_eq!(&cred_id, &cred.credential_id);
         }
+    }
+
+    #[test]
+    fn test_get_big_credential() {
+        let mut rng = ThreadRng256 {};
+        let mut persistent_store = PersistentStore::new(&mut rng);
+        let mut credential_source = create_credential_source(&mut rng, "example.com", vec![0x00]);
+        let large_blob = vec![0x53; 2048];
+        credential_source.large_blob_key = Some(large_blob.clone());
+        let cred_id = credential_source.credential_id.clone();
+        assert!(persistent_store.store_credential(credential_source).is_ok());
+        let (key, cred0) = persistent_store.find_credential_item(&cred_id).unwrap();
+        let cred1 = persistent_store.get_credential(key).unwrap();
+        assert_eq!(cred0, cred1);
+        assert_eq!(cred1.large_blob_key, Some(large_blob));
     }
 
     #[test]
